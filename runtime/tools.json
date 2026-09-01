@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "note": "What a department may touch while it works, and where. Every rule is relative to that step's own workspace: a bare grant like `Read` reads the whole machine, including this repository, so scoping is the containment. Bash is granted to nobody -- it is scoped by command, never by path, so no workspace can bound it; work that needs to run something goes through a connector with its own admission control. Network and sub-agent tools are likewise ungranted until they are governed.",
+  "default": {
+    "tools": ["Read", "Write", "Edit", "Glob", "Grep"],
+    "allow": ["Read(./**)", "Write(./**)", "Edit(./**)", "Glob(./**)", "Grep(./**)"]
+  },
+  "roles": {}
+}

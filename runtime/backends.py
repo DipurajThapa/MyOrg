@@ -52,13 +52,24 @@ class ClaudeCliBackend:
         self.timeout = timeout
 
     def __call__(self, request) -> str:
+        # A request carries its own room and its own grant. Without them the agent gets
+        # no tools at all, which is what grading and briefing want: they read, they do
+        # not make. `dontAsk` is what turns an ungranted call into a refusal instead of a
+        # prompt nobody is there to answer.
+        room = getattr(request, "workspace", None)
+        grant = getattr(request, "grant", None)
         command = ["claude", "-p", request.prompt(), "--output-format", "text",
-                   "--append-system-prompt", request.brief, "--allowedTools", ""]
+                   "--append-system-prompt", request.brief,
+                   "--permission-mode", "dontAsk"]
+        if grant and room:
+            command += ["--tools", ",".join(grant.tools), "--allowedTools", *grant.allow]
+        else:
+            command += ["--tools", "", "--allowedTools", ""]
         if self.model:
             command += ["--model", self.model]
         try:
             result = subprocess.run(command, capture_output=True, text=True,
-                                    timeout=self.timeout, cwd=ROOT, check=False)
+                                    timeout=self.timeout, cwd=room or ROOT, check=False)
         except FileNotFoundError as error:
             raise ExecutorError("`claude` CLI not found on PATH") from error
         except subprocess.TimeoutExpired as error:

@@ -86,7 +86,17 @@ class StepRequest:
     handoffs: tuple[Handoff, ...] = ()
     feedback: str = ""
     remembered: tuple[str, ...] = ()
+    workspace: object = None   # the folder this step works in, if it was given tools
+    grant: object = None       # what it may touch there
     kind = "work"
+
+    def room(self) -> str:
+        if not self.workspace or not self.grant:
+            return ""
+        return ("You are working in your own empty folder. You may read and write files "
+                "there, and nowhere else -- anything outside it will be refused. Put any "
+                "deliverable that is better as a file (a model, a table, a document) in "
+                "that folder, and still summarise it in your reply.\n\n")
 
     def known(self) -> str:
         if not self.remembered:
@@ -119,12 +129,12 @@ class StepRequest:
             f"Company goal for this run: {self.goal}\n"
             f"Your step: {self.step_id} (action type: {self.action}).\n\n"
             f"{self.known()}"
+            f"{self.room()}"
             f"{self.inbox()}\n"
             f"{self.rework()}"
             "Produce the finished work product for this step as plain text. Do not ask "
-            "questions, do not describe what you would do, and do not use any tools -- "
-            "return the deliverable itself. It is recorded verbatim as the evidence for "
-            "this step."
+            "questions and do not describe what you would do -- return the deliverable "
+            "itself. Your reply is recorded verbatim as the evidence for this step."
         )
 
 

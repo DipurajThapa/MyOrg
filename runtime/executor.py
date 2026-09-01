@@ -26,6 +26,7 @@ from runtime import company_runtime as core  # noqa: E402
 from runtime.backends import (BACKENDS, ClaudeCliBackend,  # noqa: E402,F401
                               ExecutorError, StubBackend, STEP_TIMEOUT_SECONDS)
 from runtime.checking import drive_check as _drive_check  # noqa: E402
+from runtime import tools  # noqa: E402
 from runtime.prompts import (AGENTS_DIR, CheckRequest, GRADE_PATTERN,  # noqa: E402,F401
                              GradeRequest, Handoff, MAX_HANDOFF_CHARS,
                              MAX_SUBMISSION_CHARS, StepRequest, VERDICTS,
@@ -189,14 +190,21 @@ def remembered_for(step_id: str, step: dict, state: dict) -> tuple[str, ...]:
     return tuple(entry.as_prompt_line() for entry in found)
 
 
-def dispatch(run_id: str, step_id: str, step: dict, state: dict, backend) -> str:
+def dispatch(run_id, step_id, step, state, backend) -> tuple:
+    """Send the step to its department, in its own room, with only what it may touch.
+
+    Returns the agent's reply and whatever files it left behind."""
     owner = step["owner"]
-    return backend(StepRequest(run_id=run_id, step_id=step_id, agent=owner,
-                               action=step["action"], goal=state["goal"],
-                               brief=agent_brief(owner),
-                               handoffs=upstream_handoffs(state, step),
-                               feedback=last_feedback(state, step),
-                               remembered=remembered_for(step_id, step, state)))
+    room = tools.workspace(run_id, step_id)
+    grant = tools.grant_for(owner)
+    output = backend(StepRequest(run_id=run_id, step_id=step_id, agent=owner,
+                                 action=step["action"], goal=state["goal"],
+                                 brief=agent_brief(owner),
+                                 handoffs=upstream_handoffs(state, step),
+                                 feedback=last_feedback(state, step),
+                                 remembered=remembered_for(step_id, step, state),
+                                 workspace=room, grant=grant))
+    return output, tools.produced_files(room)
 
 
 def finish(run_id: str, step_id: str, owner: str, evidence: str, revision: str) -> str:
@@ -276,7 +284,7 @@ def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
     if finish_approved_hold(run_id, step_id, step, state, log):
         return
     try:
-        output = dispatch(run_id, step_id, step, state, backend)
+        output, produced = dispatch(run_id, step_id, step, state, backend)
     except ExecutorError as error:
         log(f"  {step_id}: agent failed -- {error}")
         record_failure(run_id, step_id, owner, str(error))
@@ -292,7 +300,9 @@ def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
         log(f"  {step_id}: rejected -- {rejection}")
         record_failure(run_id, step_id, owner, rejection)
         return
-    evidence = write_evidence(run_id, step_id, output)
+    # The reply and the files are one deliverable: the manifest goes inside the evidence,
+    # so the hash the runtime records covers what was produced as well as what was said.
+    evidence = write_evidence(run_id, step_id, output + "\n\n" + tools.manifest(produced))
     try:
         run_status = finish(run_id, step_id, owner, evidence, state["workflow_revision"])
     except SystemExit as error:

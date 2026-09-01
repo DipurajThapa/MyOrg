@@ -262,8 +262,8 @@ marked **(new)**.
 
 | ID | Deliverable | Status | What Exists | What Is Missing | Deps / Blockers | Pri | Evidence |
 |---|---|---|---|---|---|---|---|
-| EXEC-01 **(new)** | Governed tool access for dispatched agents | ⛔ | `--allowedTools ""` | Per-role allowlist, tool audit, evidence from real actions | AGENT-06, TOOL-08 | **P0** | `backends.py:56` |
-| AGENT-06 | Per-role tool permissions | ⛔ | All-or-nothing | Least-privilege map role → tools | EXEC-01 | **P0** | agent files carry no tool list |
+| EXEC-01 **(new)** | Governed tool access for dispatched agents | ✅ | Each step runs in its own workspace (`runtime/workspaces/<run>/<step>/`) with `--tools`, workspace-scoped `--allowedTools` and `--permission-mode dontAsk`. Files the agent leaves are hashed into the evidence, so the recorded hash covers the artifacts as well as the text | Local files only; connectors and network still ungranted (TOOL-03/04) | — | ~~P0~~ done | live run: `cfo-finance` produced a real CSV + model; 16 tests |
+| AGENT-06 | Per-role tool permissions | ✅ | `runtime/tools.json`, the same shape as `policy.json`: a default grant plus per-role overrides, validated on load. Bash, WebFetch, WebSearch, Task and Agent are ungrantable with the reason recorded — Bash is scoped by command, never by path, so no workspace can bound it | Every role currently takes the default; overrides exist but none are needed yet | — | ~~P0~~ done | `tests/test_tools.py` |
 | HOOK-01 | Claude Code hooks | ⛔ | None | PreToolUse/PostToolUse enforcement of §3 | EXEC-01 | P1 | `.claude/` has no hooks |
 | HOOK-02 | Inbound webhook trigger | ⛔ | `WebhookVerifier` built, unwired | Route + event→run mapping | ARCH-06 | **P0** | no `/webhooks` in `api.py` |
 | HOOK-03 | Cron / calendar triggers | ⛔ | Prose in `CLAUDE.md` §5 | In-product schedule store + firing | LOOP-03 | **P0** | no cron in code |
@@ -338,6 +338,7 @@ marked **(new)**.
 
 | # | Blocker | Tracker IDs | Why it is P0 | Unlocks |
 |---|---|---|---|---|
+| ~~0~~ | ~~Agents cannot use tools~~ | AGENT-06, EXEC-01 | **CLOSED 2026-09-01.** A department can now produce real artifacts, inside a boundary that was measured rather than assumed | Real deliverables; data-informed planning; the connector work that follows |
 | ~~0~~ | ~~Two drivers can do the same step~~ | REC-10 | **CLOSED 2026-09-01.** Ownership is a precondition of the write, not a courtesy | Safe multi-replica workers; unblocks DEP-07 and the Docker migration |
 | ~~0~~ | ~~Quality gates fail open~~ | VAL-07 | **CLOSED 2026-09-01.** A control that cannot run no longer reports a pass | Trustworthy unattended grading; safe multi-replica operation later |
 | ~~1~~ | ~~Governance evidence is self-reported~~ | AUD-01, AUD-02 | **CLOSED 2026-09-01.** `runtime/audit.py` writes the line as a side effect of the gate; the transition fails closed if the log cannot be written. RCA-A's root cause — control and evidence on the same side of the trust boundary — is removed for gate transitions | Trustworthy unattended operation; HITL-05; every governance claim in the ledger |

@@ -21,3 +21,4 @@ logs/*.lock
 apichk-*/
 tmp*/
 runtime/runs/*.wf.json
+runtime/workspaces/
