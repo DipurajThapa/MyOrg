@@ -28,3 +28,5 @@ runtime/runs/*.planned.json
 runtime/runs/_read-model.db*
 # hand-taken database backups stay off the repository
 *.db.*.bak
+# a typecheck cache, regenerated on every run
+*.tsbuildinfo

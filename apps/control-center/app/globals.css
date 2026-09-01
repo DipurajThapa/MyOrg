@@ -288,3 +288,13 @@ button.queue-step:focus-visible { outline: 2px solid var(--amber, #d99400); outl
 .decision-reason input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); background: #fff; font: inherit; font-size: 11px; }
 .decision-reason input:focus-visible { outline: 2px solid var(--amber, #d99400); outline-offset: -1px; }
 .decision-actions button[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+/* Autonomy: what may start work without a person, and what left and never came back.
+   Two panels side by side on a wide screen, stacked when there is no room. */
+.panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; align-items: start; }
+.autonomy-item { padding: 15px 0; border-bottom: 1px solid var(--line); }
+.autonomy-item:last-child { border-bottom: 0; }
+.autonomy-item h3 { font-size: 15px; margin: 6px 0 8px; }
+.autonomy-item p { margin: 0 0 6px; font-size: 12px; line-height: 1.6; }
+.muted { color: #71807a; font-size: 10px; font-family: var(--font-geist-mono); letter-spacing: .04em; }
+.autonomy-list { display: grid; }

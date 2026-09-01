@@ -666,6 +666,19 @@ class Store:
                 "WHERE status='queued'").fetchone()
             return int(row["depth"]), row["oldest"]
 
+    def soonest_authorization_expiry(self) -> str | None:
+        """When the first enabled connector loses its authorization, across every org.
+
+        Only enabled ones: an expiry on a connector nobody uses is not an operational
+        event, and alerting on it teaches people to ignore the alert.
+        """
+        with self.reading() as connection:
+            row = connection.execute(
+                "SELECT MIN(a.expires_at) AS soonest FROM connector_authorizations a "
+                "JOIN connector_registrations r ON r.org_id=a.org_id AND r.id=a.connector_id "
+                "WHERE a.status='authorized' AND r.enabled=1").fetchone()
+            return row["soonest"]
+
     def in_flight_receipt_summary(self) -> tuple[int, str | None]:
         """Calls that left this host and were never resolved, and the age of the oldest."""
         with self.reading() as connection:

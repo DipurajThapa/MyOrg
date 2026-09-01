@@ -118,6 +118,25 @@ own state. **Treat every other autonomy alert as unreliable until this clears** 
 all go quiet for the same reason a healthy company does. `myorg_runtime_snapshot_errors_total`
 counts the failures; the API log names the source that raised.
 
+## Rotating the signing key
+
+`MYORG_AUTH_SECRET` accepts two comma-separated keys. Tokens are always signed with the
+first; either is accepted on the way in. That overlap is the whole procedure:
+
+1. `MYORG_AUTH_SECRET="<new>,<old>"` — restart. Existing tokens keep working; new ones use
+   the new key.
+2. Wait **15 minutes** (the maximum token lifetime), so nothing signed with the old key is
+   still valid.
+3. `MYORG_AUTH_SECRET="<new>"` — restart. The old key is now dead.
+
+Both keys must be at least 32 bytes. Three keys are refused: an overlap is two, and a third
+means an earlier rotation was never finished.
+
+**After a suspected leak, skip step 1.** Set the new key alone and accept that everyone is
+logged out — that is the correct trade when the old key may be in someone else's hands. The
+overlap exists so that *planned* rotation is not an outage, which is what makes it something
+people will actually do on a schedule.
+
 ## Backup, restore, and reconciliation
 
 The six-hour timer creates a SQLite online backup, checksum manifest, and integrity/hash-chain

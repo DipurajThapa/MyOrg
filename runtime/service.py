@@ -343,7 +343,7 @@ class MyOrgService:
                     "current_project_id", "revision"}
         if set(body) != required or body["schema_version"] != 1:
             raise ServiceError("UI state must match schema version 1 exactly")
-        if body["active_view"] not in {"overview", "intake", "queue", "flow"}:
+        if body["active_view"] not in {"overview", "intake", "queue", "flow", "autonomy"}:
             raise ServiceError("invalid active view")
         if body["time_range"] not in {"7d", "30d", "90d", "all"}:
             raise ServiceError("invalid time range")

@@ -145,7 +145,8 @@ Order of operations, and none of it can be skipped:
    no private or loopback address, `secret_ref` is a *variable name* and never a value.
 2. **A human authorizes it** — `POST /v1/connectors/{id}/authorization`, `system-admin`,
    human identity required, with an expiry no more than 366 days out. Until this exists the
-   connector cannot be enabled at all.
+   connector cannot be enabled at all. **Nothing renews it for you**: `MyOrgConnectorAuthorizationExpiring`
+   fires 14 days ahead, and once it lapses every write through that connector is refused.
 3. **A human enables it** — `PUT /v1/connectors/{id}/status`.
 4. **A maker requests approval for one exact action** — `POST /v1/approvals`. The approval is
    bound to a SHA-256 of (connector, action, target, payload reference, payload hash).
@@ -195,7 +196,8 @@ than admitting it exists.
 | `myorg_trigger_queue_depth` / `..._oldest_seconds` | is work arriving faster than it is planned |
 | `myorg_connector_receipts_in_flight` / `..._unsettled_seconds_max` | calls that left and never came back |
 | `myorg_notices_outstanding{severity=...}` | what the outbox is holding for a person |
-| `myorg_runtime_snapshot_ok` | **0 means the four rows above are lying** — the collector could not read its own state |
+| `myorg_connector_authorization_expires_seconds` | until the first enabled connector loses access; negative once it has |
+| `myorg_runtime_snapshot_ok` | **0 means the rows above are lying** — the collector could not read its own state |
 
 That last row is the one to alert on first. A collector that fails quietly goes silent for
 exactly the same reason a healthy company does.

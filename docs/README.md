@@ -13,6 +13,8 @@
 |---|---|
 | [OPERATIONS-RUNBOOK.md](OPERATIONS-RUNBOOK.md) | Day-to-day operation: starting the service, backups, maintenance, what to do when something stops. |
 | [TRIGGERS-AND-LIVE-CONNECTORS.md](TRIGGERS-AND-LIVE-CONNECTORS.md) | Running the loop as a service, registering schedules and signed webhooks, and reaching a real external system — including what to do when a call left and never came back. |
+| [ARCHITECTURE-OPPORTUNITIES-2026-09-01.md](ARCHITECTURE-OPPORTUNITIES-2026-09-01.md) | Independent review of the control architecture: which further harnesses, loops and hooks are worth building, which are not, and what must be proven before each. Analysis only — nothing here is implemented. |
+| [UI-DESIGN-DIRECTION.md](UI-DESIGN-DIRECTION.md) | The Control Center design system, and which parts of the supplied dashboard reference to take, adapt, and ignore. |
 | [UAT-DEPLOYMENT-AND-ROLLBACK.md](UAT-DEPLOYMENT-AND-ROLLBACK.md) | The deployment and rollback drill. Written, not yet executed. |
 | [PROJECT-INTAKE-AND-PRODUCTION-LOOP.md](PROJECT-INTAKE-AND-PRODUCTION-LOOP.md) | The governed six-document intake and the value-stream loop the Control Center's intake screen implements. |
 

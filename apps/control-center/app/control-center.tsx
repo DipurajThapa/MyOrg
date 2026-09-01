@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-type View = "overview" | "intake" | "queue" | "flow";
+type View = "overview" | "intake" | "queue" | "flow" | "autonomy";
 type FlowMode = "current" | "future";
 type TimeRange = "7d" | "30d" | "90d" | "all";
 type QueueSort = "updated_desc" | "updated_asc";
@@ -28,6 +28,27 @@ type ProjectIntake = {
   documents: Record<DocumentKey, boolean>;
   status: "draft" | "ready";
   revision: number;
+};
+
+/** A standing permission to act unattended. Mirrors GET /v1/schedules exactly. */
+type Schedule = {
+  id: string;
+  kind: "interval" | "daily";
+  interval_seconds: number | null;
+  daily_at: string | null;
+  goal: string;
+  enabled: 0 | 1;
+  next_fire_at: string;
+  last_fire_at: string | null;
+};
+
+/** A call that left this host and was never resolved. Mirrors GET /v1/connectors/in-flight. */
+type InFlightReceipt = {
+  id: string;
+  connector_id: string;
+  idempotency_key: string;
+  outcome_note: string | null;
+  created_at: string;
 };
 
 /** One parked step waiting on a person. Mirrors GET /v1/decisions exactly. */
@@ -75,6 +96,7 @@ const navItems: Array<{ id: View; label: string; index: string }> = [
   { id: "intake", label: "Project intake", index: "02" },
   { id: "queue", label: "Work & approvals", index: "03" },
   { id: "flow", label: "Value stream", index: "04" },
+  { id: "autonomy", label: "Autonomy", index: "05" },
 ];
 
 const intakeStages = [
@@ -132,6 +154,10 @@ export default function ControlCenter({
   const [notice, setNotice] = useState("");
   const [decisions, setDecisions] = useState<Decision[] | null>(null);
   const [decisionsError, setDecisionsError] = useState("");
+  const [schedules, setSchedules] = useState<Schedule[] | null>(null);
+  const [inFlight, setInFlight] = useState<InFlightReceipt[] | null>(null);
+  const [autonomyError, setAutonomyError] = useState("");
+  const [pausing, setPausing] = useState("");
   const [selectedDecision, setSelectedDecision] = useState<string | null>(null);
   const [decisionReason, setDecisionReason] = useState("");
   const [deciding, setDeciding] = useState(false);
@@ -331,6 +357,44 @@ export default function ControlCenter({
     })();
     return () => { active = false; };
   }, [hydrated, isSignedIn, view, loadDecisions]);
+
+  // Two reads, one screen. Both are allowed to fail on their own: an operator who cannot
+  // see the exceptions should still be able to reach the stop button.
+  const loadAutonomy = useCallback(async () => {
+    const [scheduleResult, receiptResult] = await Promise.allSettled([
+      runtimeRequest<Schedule[]>("/v1/schedules"),
+      runtimeRequest<InFlightReceipt[]>("/v1/connectors/in-flight"),
+    ]);
+    setSchedules(scheduleResult.status === "fulfilled" ? scheduleResult.value : []);
+    setInFlight(receiptResult.status === "fulfilled" ? receiptResult.value : []);
+    const failed = [scheduleResult, receiptResult].find((r) => r.status === "rejected");
+    setAutonomyError(
+      failed && failed.status === "rejected"
+        ? failed.reason instanceof Error ? failed.reason.message : "Autonomy state could not be read"
+        : "",
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated || !isSignedIn || view !== "autonomy") return;
+    let active = true;
+    (async () => { if (active) await loadAutonomy(); })();
+    return () => { active = false; };
+  }, [hydrated, isSignedIn, view, loadAutonomy]);
+
+  async function setScheduleEnabled(schedule: Schedule, enabled: boolean) {
+    setPausing(schedule.id);
+    try {
+      await runtimeRequest(`/v1/schedules/${schedule.id}/status`,
+        { method: "PUT", body: JSON.stringify({ enabled }) });
+      setNotice(`${schedule.id} is ${enabled ? "running again" : "paused"}. Nothing new will start from it${enabled ? "" : " until you resume it"}.`);
+      await loadAutonomy();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "The schedule could not be changed");
+    } finally {
+      setPausing("");
+    }
+  }
 
   async function decide(decision: Decision, verdict: "approve" | "reject") {
     const reason = decisionReason.trim();
@@ -728,6 +792,100 @@ export default function ControlCenter({
                     )}
                   </aside>
                 )}
+              </section>
+            </>
+          )}
+
+          {view === "autonomy" && (
+            <>
+              <section className="page-heading">
+                <div>
+                  <p className="eyebrow">CAPABILITY 05 / STANDING PERMISSION</p>
+                  <h1>What can start work<br />without you.</h1>
+                </div>
+                <button type="button" className="text-action" onClick={() => void loadAutonomy()}>Refresh</button>
+              </section>
+
+              <section className="panel-grid">
+                {autonomyError && (
+                  <article className="panel run-detail">
+                    <div className="run-title-row"><div><span className="mono-label">COULD NOT READ</span><h2>Autonomy state unavailable</h2></div></div>
+                    <p>{autonomyError}</p>
+                  </article>
+                )}
+
+                <article className="panel run-detail">
+                  <div className="run-title-row">
+                    <div>
+                      <span className="mono-label">
+                        {schedules === null ? "READING" : `${schedules.filter((s) => s.enabled).length} RUNNING · ${schedules.filter((s) => !s.enabled).length} PAUSED`}
+                      </span>
+                      <h2>Schedules</h2>
+                    </div>
+                  </div>
+                  <p>Each one starts a run on its own clock. Pausing stops new work; runs already going keep going.</p>
+                  {schedules !== null && schedules.length === 0 && (
+                    <p className="muted">Nothing is scheduled. The company only works when you ask it to.</p>
+                  )}
+                  <div className="autonomy-list">
+                    {(schedules ?? []).map((schedule) => (
+                      <div key={schedule.id} className="autonomy-item">
+                        <div className="run-title-row">
+                          <div>
+                            <span className="mono-label">
+                              {schedule.enabled ? "RUNNING" : "PAUSED"} ·{" "}
+                              {schedule.kind === "daily" ? `EVERY DAY AT ${schedule.daily_at} UTC`
+                                : `EVERY ${Math.round((schedule.interval_seconds ?? 0) / 60)} MIN`}
+                            </span>
+                            <h3>{schedule.id}</h3>
+                          </div>
+                          <button
+                            type="button"
+                            className={schedule.enabled ? "secondary-action" : "primary-action"}
+                            disabled={pausing === schedule.id}
+                            onClick={() => void setScheduleEnabled(schedule, !schedule.enabled)}
+                          >
+                            {pausing === schedule.id ? "Saving…" : schedule.enabled ? "Pause" : "Resume"}
+                          </button>
+                        </div>
+                        <p>{schedule.goal}</p>
+                        <p className="muted">
+                          Next: {schedule.enabled ? schedule.next_fire_at : "paused"}
+                          {schedule.last_fire_at ? ` · last: ${schedule.last_fire_at}` : " · never fired"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="panel run-detail">
+                  <div className="run-title-row">
+                    <div>
+                      <span className="mono-label">
+                        {inFlight === null ? "READING" : inFlight.length === 0 ? "ALL RESOLVED" : `${inFlight.length} UNRESOLVED`}
+                      </span>
+                      <h2>Calls we never got an answer to</h2>
+                    </div>
+                  </div>
+                  <p>
+                    These left this machine and never came back. Nothing will try them again on its own,
+                    because a second try could do the same thing twice. Check the other system, then
+                    record what you found.
+                  </p>
+                  {inFlight !== null && inFlight.length === 0 && (
+                    <p className="muted">Nothing is unresolved. Every outward call has an answer.</p>
+                  )}
+                  <div className="autonomy-list">
+                    {(inFlight ?? []).map((receipt) => (
+                      <div key={receipt.id} className="autonomy-item">
+                        <span className="mono-label">{receipt.connector_id.toUpperCase()} · SENT {receipt.created_at}</span>
+                        <h3>{receipt.id}</h3>
+                        <p>{receipt.outcome_note || "No answer was read from the provider."}</p>
+                        <p className="muted">Key: {receipt.idempotency_key}</p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
               </section>
             </>
           )}

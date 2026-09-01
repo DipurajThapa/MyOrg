@@ -58,11 +58,22 @@ class Principal:
 class TokenService:
     def __init__(self, store: Store, secret: str | bytes, issuer: str = "myorg-local",
                  audience: str = "myorg-api"):
+        """`secret` may carry a second, comma-separated key: `current,previous`.
+
+        Tokens are always signed with the first. Verification tries the rest too, which is
+        the whole of key rotation: set both, wait one token lifetime (max 15 minutes), drop
+        the old one. Without the overlap, rotating -- including rotating *because* a key
+        leaked -- logs everybody out at once, so the safe move becomes the disruptive one.
+        """
         raw = secret.encode("utf-8") if isinstance(secret, str) else secret
-        if len(raw) < 32:
+        keys = [part.strip() for part in raw.split(b",") if part.strip()]
+        if not keys or any(len(key) < 32 for key in keys):
             raise AuthError("MYORG_AUTH_SECRET must contain at least 32 bytes")
+        if len(keys) > 2:
+            raise AuthError("MYORG_AUTH_SECRET accepts at most a current and a previous key")
         self.store = store
-        self.secret = raw
+        self.secret = keys[0]
+        self.accepted = keys
         self.issuer = issuer
         self.audience = audience
 
@@ -101,8 +112,10 @@ class TokenService:
             raise AuthError("invalid token JSON") from error
         if header != HEADER:
             raise AuthError("unsupported token header")
-        expected = hmac.new(self.secret, f"{encoded_header}.{encoded_payload}".encode("ascii"), hashlib.sha256).digest()
-        if not hmac.compare_digest(expected, _b64decode(encoded_signature)):
+        signed = f"{encoded_header}.{encoded_payload}".encode("ascii")
+        supplied = _b64decode(encoded_signature)
+        if not any(hmac.compare_digest(hmac.new(key, signed, hashlib.sha256).digest(), supplied)
+                   for key in self.accepted):
             raise AuthError("invalid token signature")
         required = {"aud", "exp", "iat", "iss", "jti", "org", "sub"}
         if set(payload) != required:

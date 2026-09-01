@@ -91,6 +91,9 @@ class Metrics:
 RUN_STATES = ("running", "waiting on you", "stalled", "finished", "failed")
 SEVERITIES = ("blocking", "attention", "routine")
 SNAPSHOT_TTL_SECONDS = 15.0
+# "Nothing is authorized" is a real state, and not the same as "expiring now". A zero here
+# would fire the expiry alert on every install that has no connectors.
+NO_AUTHORIZATION_EXPIRY = 31_536_000.0  # a year away, i.e. nothing to worry about
 
 
 def _age_seconds(stamp: str | None, now: datetime) -> float:
@@ -164,6 +167,20 @@ class RuntimeGauges:
         sample["receipts_in_flight"] = count
         sample["receipt_unsettled_seconds_max"] = _age_seconds(oldest, now)
 
+    def _authorizations(self, sample: dict, now: datetime) -> None:
+        """Seconds until the first enabled connector loses its authorization.
+
+        Negative once it has passed. `NO_AUTHORIZATION_EXPIRY` when nothing is authorized,
+        which is a real state and not the same as "expiring now" -- a zero here would fire
+        the alert on every install that has no connectors.
+        """
+        if self.store is None:
+            return
+        soonest = self.store.soonest_authorization_expiry()
+        if soonest:
+            moment = datetime.fromisoformat(soonest.replace("Z", "+00:00"))
+            sample["authorization_expires_seconds"] = (moment - now).total_seconds()
+
     def collect(self, now: datetime | None = None) -> dict:
         """One sample. Each source is isolated: a broken one costs its own numbers, not
         the whole endpoint."""
@@ -174,8 +191,9 @@ class RuntimeGauges:
                         "approvals_waiting": 0, "approval_wait_seconds_max": 0.0,
                         "trigger_queue_depth": 0, "trigger_queue_oldest_seconds": 0.0,
                         "receipts_in_flight": 0, "receipt_unsettled_seconds_max": 0.0,
-                        "ok": 1}
-        for source in (self._runs, self._approvals, self._notices, self._triggers, self._receipts):
+                        "authorization_expires_seconds": NO_AUTHORIZATION_EXPIRY, "ok": 1}
+        for source in (self._runs, self._approvals, self._notices, self._triggers,
+                       self._receipts, self._authorizations):
             try:
                 source(sample, moment)
             except Exception:  # noqa: BLE001 - a scrape must never take the server down
@@ -231,6 +249,9 @@ class RuntimeGauges:
             "# HELP myorg_connector_receipt_unsettled_seconds_max Age of the oldest unresolved call.",
             "# TYPE myorg_connector_receipt_unsettled_seconds_max gauge",
             f'myorg_connector_receipt_unsettled_seconds_max {sample["receipt_unsettled_seconds_max"]:.1f}',
+            "# HELP myorg_connector_authorization_expires_seconds Until the first enabled connector loses access; negative once it has.",
+            "# TYPE myorg_connector_authorization_expires_seconds gauge",
+            f'myorg_connector_authorization_expires_seconds {sample["authorization_expires_seconds"]:.0f}',
             "# HELP myorg_runtime_snapshot_ok 1 when every source answered, 0 when one did not.",
             "# TYPE myorg_runtime_snapshot_ok gauge",
             f'myorg_runtime_snapshot_ok {sample["ok"]}',

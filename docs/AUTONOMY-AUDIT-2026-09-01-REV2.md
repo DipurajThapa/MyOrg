@@ -985,10 +985,10 @@ behind) · TOOL-03 · TOOL-07 · HOOK-02 · HOOK-03 · DEP-06 · DEP-07 · LOOP-
 | SEC-08 | Trigger intake has backpressure | ✅ | A valid signature was an unbounded model bill | ~~P1~~ done | 4 `BackpressureTest` checks |
 | OPS-01 | One supervised loop per runs directory | ✅ | Two loops would plan and pay twice | ~~P1~~ done | 3 `single_instance` checks |
 | OBS-08 | Metrics and alerts for the autonomous half | ✅ | Only the web server was watched, and the company now runs unattended | ~~P1~~ done | `tests/test_runtime_metrics.py` 36/36; 5 alert rules |
-| UI-02 | Operator surface for triggers, schedules and exceptions | ⛔ | Standing autonomy is `curl`-only | **P1** | Control Center shows decisions only |
-| TOOL-09 | Connector authorization renewal and expiry warning | ⛔ | Access dies at a moment nobody chose | P1 | `_admit` refuses expired |
-| VCS-03 | A git remote, so CI actually runs | ⛔ | CI has never executed | P1 | no remote configured |
-| SEC-09 | Key rotation with an overlap window | ⛔ | Rotation is an outage | P2 | `TokenService` holds one secret |
+| UI-02 | Operator surface for triggers, schedules and exceptions | ✅ | Standing autonomy was `curl`-only | ~~P1~~ done | Autonomy screen: schedules with pause/resume, unresolved calls; no new API routes needed |
+| TOOL-09 | Connector authorization renewal and expiry warning | 🟡 | Access died at a moment nobody chose | P1 | `myorg_connector_authorization_expires_seconds` + a 14-day alert (5 tests). **Warning built; OAuth refresh still needs a live provider (TOOL-04)** |
+| VCS-03 | A git remote, so CI actually runs | 🚧 | CI has never executed | P1 | Remote **is** configured (`origin` → DipurajThapa/MyOrg); 3 commits unpushed. Pushing is outward-facing and blocked by the local hook — **a human must push** |
+| SEC-09 | Key rotation with an overlap window | ✅ | Rotation was an outage, including rotation after a leak | ~~P2~~ done | `MYORG_AUTH_SECRET=current,previous`: sign with the first, accept either (7 tests) |
 | REC-13 | A partially created triggered run is adopted, not orphaned | ✅ | Attempts used to burn against a run that already existed, then abandon it | ~~P2~~ done | `test_a_run_a_previous_attempt_created_is_adopted_not_orphaned` |
 
 **Amended**
@@ -1023,6 +1023,27 @@ The stop button matters more than the start button. A person who cannot pause a 
 from the screen in front of them will not be able to stop the company at the moment they
 most want to.
 
-After that, in order: **VCS-03** (a remote, so CI has ever run) · **TOOL-09** (authorizations
-expire silently) · **HITL-06** (CLI approvals are still unauthenticated) · **TOOL-04**, which
-remains the binding constraint on usefulness and needs a human, not a session.
+~~After that, in order: **VCS-03** · **TOOL-09** · **HITL-06** · **TOOL-04**.~~
+
+**Update, later the same day.** UI-02, TOOL-09 (the warning half) and SEC-09 are done.
+VCS-03 is blocked on a human: the remote is configured and three commits are unpushed, but
+pushing is outward-facing and the local hook refuses it.
+
+**Next, from the architecture review** ([ARCHITECTURE-OPPORTUNITIES-2026-09-01.md](ARCHITECTURE-OPPORTUNITIES-2026-09-01.md)):
+
+**A-01 — a cost ceiling per run and per org.** Every control in this runtime fails safe. A
+grader that cannot run parks the step; an audit log that cannot be written stops the gate; an
+outward call with an unknown outcome is never retried. The spend path is the single
+exception: it fails *expensive*, silently, and the company now runs on a schedule and on
+webhooks — so it fails expensive while nobody is at the keyboard.
+
+It is gated on a ten-minute experiment: does `claude -p` report token usage in a
+machine-readable form? The answer decides whether A-01 is a real cost ceiling or a cruder
+call cap, and nothing should be designed further until it is answered.
+
+A-01 ships with **A-06** (replay-safe executor ids — capping spend while leaking spend to
+re-dispatch is half a control) and **A-05** (a budget extension, built once, generic over the
+cycle budget and the cost budget). Those three are one project.
+
+Still open and unchanged: **HITL-06** (CLI approvals unauthenticated) · **TOOL-04** (the
+binding constraint on usefulness; needs a human, not a session) · **DEBT-02** (module sizes).

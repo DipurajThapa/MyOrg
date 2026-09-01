@@ -200,6 +200,57 @@ class RuntimeGaugesTest(unittest.TestCase):
         self.assertAlmostEqual(series(rendered, "myorg_connector_receipt_unsettled_seconds_max"),
                                1800.0, delta=1.0)
 
+    # --- connector authorization expiry (TOOL-09) -------------------------------------
+
+    def authorize(self, connector_id: str, expires_at: str) -> None:
+        from runtime.connectors import validate_manifest
+        self.store.upsert_actor("acme", "chief", "human", "Chief", ["system-admin"])
+        self.store.register_connector("acme", validate_manifest({
+            "id": connector_id, "kind": "http", "mode": "read_only",
+            "base_url": "https://api.example.com", "allowed_hosts": ["api.example.com"],
+            "allowed_actions": ["ping"], "secret_ref": "TOOL9_TOKEN",
+            "timeout_seconds": 5, "max_response_bytes": 4096, "enabled": False}))
+        self.store.authorize_connector("acme", connector_id, "acct-1", ["read"], "TOOL9_TOKEN",
+                                       None, expires_at, "chief", f"auth-{connector_id}", "t")
+        self.store.set_connector_enabled("acme", connector_id, True, "chief",
+                                         f"on-{connector_id}", "t")
+
+    def test_no_authorization_is_not_the_same_as_expiring_now(self) -> None:
+        """A zero here would fire the expiry alert on every install with no connectors."""
+        from runtime.observability import NO_AUTHORIZATION_EXPIRY
+        value = series(self.gauges.render(), "myorg_connector_authorization_expires_seconds")
+        self.assertEqual(value, NO_AUTHORIZATION_EXPIRY)
+
+    def test_an_expiring_authorization_counts_down(self) -> None:
+        self.authorize("crm", "2026-09-15T00:00:00Z")
+        now = datetime.fromisoformat("2026-09-08T00:00:00+00:00")
+        value = series(self.gauges.render(now=now), "myorg_connector_authorization_expires_seconds")
+        self.assertAlmostEqual(value, 7 * 86400, delta=1)
+
+    def test_a_lapsed_authorization_goes_negative(self) -> None:
+        self.authorize("crm", "2026-09-15T00:00:00Z")
+        now = datetime.fromisoformat("2026-09-20T00:00:00+00:00")
+        self.assertLess(series(self.gauges.render(now=now),
+                               "myorg_connector_authorization_expires_seconds"), 0)
+
+    def test_the_soonest_expiry_wins_not_the_latest(self) -> None:
+        self.authorize("far", "2027-01-01T00:00:00Z")
+        self.authorize("near", "2026-09-10T00:00:00Z")
+        now = datetime.fromisoformat("2026-09-08T00:00:00+00:00")
+        self.assertAlmostEqual(series(self.gauges.render(now=now),
+                                      "myorg_connector_authorization_expires_seconds"),
+                               2 * 86400, delta=1)
+
+    def test_a_disabled_connector_does_not_raise_an_expiry_alarm(self) -> None:
+        """Alerting on a connector nobody uses teaches people to ignore the alert."""
+        from runtime.observability import NO_AUTHORIZATION_EXPIRY
+        self.authorize("crm", "2026-09-10T00:00:00Z")
+        self.store.set_connector_enabled("acme", "crm", False, "chief", "off-crm", "t")
+        now = datetime.fromisoformat("2026-09-08T00:00:00+00:00")
+        self.assertEqual(series(self.gauges.render(now=now),
+                                "myorg_connector_authorization_expires_seconds"),
+                         NO_AUTHORIZATION_EXPIRY)
+
     # --- the collector reports its own failure ----------------------------------------
 
     def test_a_broken_source_is_reported_rather_than_hidden(self) -> None:

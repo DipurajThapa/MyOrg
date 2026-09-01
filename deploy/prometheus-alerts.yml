@@ -69,6 +69,17 @@ groups:
           summary: A run can no longer move and is not waiting on anybody
           runbook: docs/OPERATIONS-RUNBOOK.md#stalled-runs
 
+      - alert: MyOrgConnectorAuthorizationExpiring
+        # Access dies at a moment nobody chose, mid-run, and the failure looks like a bug.
+        # Fourteen days is enough to get a human through an OAuth flow without urgency.
+        expr: myorg_connector_authorization_expires_seconds{job="myorg-runtime"} < 1209600
+        for: 1h
+        labels: { severity: medium }
+        annotations:
+          summary: A connector authorization expires within 14 days
+          description: Re-authorize it before it lapses; once it does, every write through that connector is refused.
+          runbook: docs/TRIGGERS-AND-LIVE-CONNECTORS.md#live-connectors--reaching-a-real-system
+
       - alert: MyOrgAutonomyMetricsBlind
         # The watchers stopped watching. Without this, every alert above would go quiet
         # for the same reason a healthy company does -- which is the failure mode this
