@@ -152,16 +152,22 @@ extension path once, generic over both. **This is the leverage point: A-01 and A
 be designed together or A-01 will need its own resume path a month later.**
 **Priority: P1, and coupled to A-01.**
 
-### A-09 — Shrink the per-dispatch context floor *(new — found by running A-01's experiment)*
+### A-09 — Shrink the per-dispatch context floor *(measured — and smaller than first claimed)*
 
-**Problem.** Every dispatch pays ~$0.38–$0.44 before doing any work, and roughly 85% of that
-is the *operator's global Claude Code install* — plugins, skills, global config — not this
-product. **[V]**, four measured invocations, §6.
+> **Correction.** An earlier draft of this section said A-09 "outranks A-01". **That was
+> wrong, and the measurement is what corrected it.** The claim was extrapolated from the
+> `ping` test, where context was ~100% of the cost because the work was four tokens. In a
+> real dispatch the work is 5,000–8,000 output tokens, so trimming context saves **~16%,
+> not ~50%**. A-09 is worth doing — it is nearly free and costs no quality — but it does
+> not outrank the ceiling. See §6.1.
 
-**Why this outranks a ceiling.** A-01 stops runaway spend. A-09 reduces the cost of *every
-run the company will ever do*, including the ones nobody would want stopped. A ceiling
-divides; this multiplies. If a trimmed dispatch profile halves the floor, it is worth more
-than the ceiling and it makes the ceiling's numbers less painful.
+**Problem.** Every dispatch pays a context toll before doing any work, and a large share of
+it is the *operator's global Claude Code install* — plugins, skills, global config — not this
+product.
+
+**Value, measured rather than assumed.** ~16% off every dispatch and every grading pass, at
+no cost to output quality (6/6 deliverables still met their acceptance criteria). Real, worth
+taking, not transformative.
 
 **Mechanism, in order of increasing commitment:**
 1. **Measure first.** Establish what a real step dispatch costs today, then what it costs
@@ -179,8 +185,29 @@ it was reaching for, a global instruction that shaped its output. The mitigation
 measurement, not confidence: compare a real dispatch's *output quality*, not just its cost,
 before and after. The existing acceptance grader is the instrument for that.
 
-**Priority: P0, alongside A-01.** They are the same conversation about cost from opposite
-ends, and A-09's measurement work also produces the per-dispatch spread A-01 still needs.
+**Priority: P1.** Free and safe, so take it — but the measurement demoted it from the P0 it
+was first assigned. The larger cost lever it uncovered is **A-10**.
+
+### A-10 — Keep the cache warm *(new — found by running A-09's measurement)*
+
+**Problem.** A cold dispatch costs **3.4× a warm one**: $1.5155 against $0.5074, and its
+grading pass $1.2516 against $0.2946 **[V]**, §6.1.
+
+**Why it matters more than A-09.** Trimming context saves 16%. Avoiding a cold start saves
+70% on the calls it affects. Whatever governs cache reuse across `claude -p` invocations is
+worth far more than what is loaded into each one.
+
+**The pleasant part: half of it is already built.** `--supervised` runs one long-lived
+process rather than a cold start per run — that is exactly the shape that keeps a cache warm.
+DEP-07 was justified as *unattended operation*; this measurement suggests it is also the
+single biggest cost optimisation available, which nobody predicted.
+
+**Validation required.** Measure a supervised sweep driving N runs against N one-shot sweeps,
+and confirm the warm advantage survives across runs rather than only within one. The cache is
+the provider's behaviour, not ours, so this is an empirical claim with an expiry date —
+re-measure before relying on it.
+
+**Priority: P1**, and cheap to test because the code exists.
 
 ### A-06 — Executor mutations are replay-safe (WF-13)
 
@@ -306,9 +333,48 @@ re-created on every invocation. Three consequences:
 have caught the e2e run's retry loop at the third attempt and capped a webhook burst at
 about a tenth of its worst case. Both should be configurable; neither should be absent.
 
-**Still required before building:** measure a *real* step dispatch (a full agent brief and
-upstream evidence, not a four-word prompt) to learn how far above the floor real work sits.
-The floor is now known; the spread is not.
+### 6.1 The real-dispatch measurement (A-09) — run 2026-09-01 [V]
+
+Not a four-word prompt. A real `StepRequest`: `cfo-finance`, a full agent brief, a ledger
+extract handed over as upstream evidence, a scoped tool grant and its own workspace — the
+exact command `backends.py` builds. Each deliverable was then scored by the product's own
+acceptance grader. Two repeats per profile.
+
+| Profile | Dispatch | Grading | Total/step | cache_create | Met criteria |
+|---|---|---|---|---|---|
+| current, **cold cache** | **$1.5155** | $1.2516 | **$2.7671** | 126,098 | ✅ |
+| current, warm | $0.5074 | $0.2946 | $0.8020 | 22,884 | ✅ |
+| `--disable-slash-commands` | $0.4716 | $0.3127 | $0.7843 | 22,388 | ✅ ✅ |
+| + `--strict-mcp-config` | **$0.4258** | $0.3007 | **$0.7265** | 21,369 | ✅ ✅ |
+
+**Four findings, in order of importance:**
+
+1. **A real step costs about $0.80 warm — dispatch plus its grading pass.** Grading is not a
+   rounding error; it is 40% of the bill. Any cost model that counts dispatches and forgets
+   the grader is wrong by nearly half.
+2. **The cold-cache penalty is 3.4×.** The first dispatch cost $1.52 against $0.51 warm, and
+   its grading $1.25 against $0.29. **This is a bigger lever than trimming context** — and it
+   argues for a long-lived scheduler process over per-run cold starts, which is what
+   `--supervised` already does. An unexpected point in DEP-07's favour.
+3. **Trimming context saves ~16%, not ~50%.** $0.5074 → $0.4258 warm. Real, free, worth
+   taking — and much smaller than the `ping` test implied, because in real work the output
+   tokens are a large share of the cost.
+4. **Quality did not move. 6/6 deliverables met their acceptance criteria on every profile**,
+   each producing a file in its workspace. So the trim is safe to take; the risk this section
+   worried about did not materialise at this sample size.
+
+**Revised numbers for A-01.** At ~$0.80 per step warm, the earlier end-to-end run — one plan,
+two steps, three retries of one, and their grading — is closer to **$5–7**, and a full
+`MAX_QUEUED_TRIGGERS = 50` burst is **$250–350**. Both are worse than the previous estimate.
+The case for a ceiling is stronger after this measurement, not weaker.
+
+**Proposed defaults, now evidence-based:** **$5 per run** (≈6 graded steps) and **$50 per org
+per day** (≈10 runs). The e2e run would have been stopped at its third retry.
+
+**A caveat on the harness [V].** The measurement script initially reported 0/6 quality. That
+was the script's bug — it looked for `PASS` while the grader answers `VERDICT: MEETS`. The
+deliverables were fine; the *measurement* was wrong. Worth recording, because it is the same
+failure mode as a green suite that greps for the wrong string.
 
 **A-05.** Prove the current behaviour first: a run at `blocked_cycle_limit`, extended, and
 resumed *without re-running completed steps*. The invariant to protect is that extension
@@ -342,7 +408,8 @@ validation (§6) has passed.
 | **A-05** | Budget extension, generic over cycles and cost | `blocked_cycle_limit` is terminal, strands work, silent re-drive | Probe P3 **[V]** | Removes a dead end; prevents A-01 duplicating it | — | Two budgets, one vocabulary | Extension must not re-dispatch finished steps | **P1** | Proposed — design with A-01 |
 | **A-06** | `request_id` from (run, step, attempt) | WF-04 replay protection unreachable on the autonomous path | Probe P6 **[V]** | Closes a double-spend leak | — | Collision across attempts | Crash-and-resweep produces one dispatch | **P1** | Proposed — ready |
 | **A-04** | Run retrospective → memory → planner recall | Run N+1 is exactly as good as run N | `propose_lesson` is the only runtime writer **[V-static]** | Compounding; execution → improvement | Memory recall quality | Teaches the planner to be confidently wrong | Recall precision at 50 entries | **P1** | Proposed — validate recall first |
-| **A-09** | Shrink the per-dispatch context floor | ~85% of every dispatch's cost is the operator's global plugin/skill install, not the work | Measured: $0.44 in repo vs $0.38 outside vs 4 output tokens **[V]** | **Larger than A-01's.** Cuts the unit cost of every step the company ever runs | — | `--bare` needs `ANTHROPIC_API_KEY`, not the current OAuth login **[V]** | Measure a real dispatch under a trimmed profile; confirm the agent still performs | **P0, with A-01** | Proposed — new, from the A-01 experiment |
+| **A-09** | Trim the dispatch context profile | Part of every dispatch pays for the operator's global plugin/skill install, not the work | **Measured on a real dispatch:** $0.5074 → $0.4258 warm, quality 6/6 on every profile **[V]** | ~16% off every dispatch and grading pass, free, no quality cost | — | `--bare` needs `ANTHROPIC_API_KEY`, not OAuth **[V]** | Done — §6.1 | P1 | **Validated; ready to apply** |
+| **A-10** | Keep the cache warm: prefer one long-lived driver to cold starts | A cold dispatch costs 3.4× a warm one | **Measured:** $1.5155 cold vs $0.5074 warm; grading $1.2516 vs $0.2946 **[V]** | Larger than A-09 and already half-built — `--supervised` is a long-lived process | DEP-07 (shipped) | Cache behaviour is the provider's, not ours; may change | Measure a supervised sweep of N runs vs N one-shot sweeps | **P1** | Proposed — new, from the A-09 measurement |
 | **A-03** | Non-model validation for one action class | Three checks, one model family | VAL-06 **[V-static]** | Verifies the quality claim | **TOOL-04** | Scope creep into a rules engine | Needs real data to reconcile against | P1 | Blocked |
 | **A-02** | SLA clock and breach event | Runtime has no notion of a deadline | `lead-response` SLA is prose **[V-static]** | Mostly captured by OBS-08 | HOOK-03 | Duplicates OBS-08 alerting | Evidence the alert is insufficient | P2 | Deferred |
 | **A-07** | Document the two approval concepts | `decide_step` vs `decide_approval` are distinct and look alike | `service.py:94,157` **[V-static]** | Prevents a whole class of misuse | — | None | — | P2 | Proposed — docs only |
@@ -355,10 +422,9 @@ validation (§6) has passed.
 ```
   [validated ✓] claude -p reports total_cost_usd directly -- no pricing table needed
        │
-       ├──► A-09 (measure a real dispatch; trim the profile)   do this first: its
-       │        │                                              measurement is also the
-       │        │                                              input A-01 still needs
-       │        └──► informs A-01's default ceiling
+       ├──► A-09 (trim the profile)  [MEASURED ✓] ~16%, free, no quality cost -- just apply
+       ├──► A-10 (keep the cache warm) [NEW]  3.4x on cold starts; --supervised already does it
+       │        └──► measure a supervised sweep vs N one-shot sweeps
        │
        ├──► A-06 (replay-safe ids)         cheap, independent
        │        │
@@ -370,9 +436,10 @@ validation (§6) has passed.
        └──► A-07, A-08 ── documentation and a decision; no code
 ```
 
-**Do A-09's measurement before A-01's code.** It costs nothing but a few dispatches, it
-produces the number A-01 needs to set a defensible default, and it may show that the
-cheapest fix to spend is configuration rather than a control.
+**A-09's measurement has been done (§6.1) and it changed the order.** It produced A-01's
+defensible defaults ($5/run, $50/org/day), demoted itself from P0 to P1 (16%, not 50%), and
+surfaced A-10 — where the real money is. A-01 remains the P0: at ~$0.80 per graded step, a
+full trigger burst is $250–350, which is worse than the estimate that justified it.
 
 **Leverage.** A-05 built generically eliminates the resume path A-01 would otherwise need.
 A-06 built first makes A-01's accounting trustworthy. Those three are one project.
