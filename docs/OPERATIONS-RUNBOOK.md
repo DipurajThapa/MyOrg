@@ -20,6 +20,42 @@ receipts, project intakes, audit events, and backups must not be automatically d
 privacy owner approves the jurisdiction-specific retention and legal-hold policy. Backup lifecycle
 must be configured at the storage platform after that decision.
 
+## Standing a new company up (ARCH-06)
+
+One command creates the store, the organization, the first operator and a sign-in token.
+It is safe to run twice.
+
+```bash
+export MYORG_AUTH_SECRET="$(python -c 'import secrets;print(secrets.token_hex(32))')"
+python -m runtime.admin bootstrap   --org default --name "MyOrg"   --operator dipuraj --operator-name "Dipuraj Thapa"
+```
+
+Keep `MYORG_AUTH_SECRET` — every token is signed with it, and without it nobody can sign
+in. The printed token is a bearer credential with a short life: keep it out of shell
+history, logs and tickets, and issue more with `admin issue-token`.
+
+The first operator gets `decision-owner` and `maker`: enough to answer gates and prepare
+work. Anything wider is a deliberate second step:
+
+```bash
+python -m runtime.admin actor --org default --id auditor-one   --type human --name "Auditor" --role auditor
+```
+
+Then run the parts you need:
+
+```bash
+export MYORG_DB=$PWD/runtime/data/myorg.db
+python -m runtime.api                 # the governed API the web app talks to
+python -m runtime.projection          # mirror runs into the operator read model
+python -m runtime.scheduler --once    # drive whatever can move
+python -m runtime.admin verify        # integrity, migrations, event counts
+```
+
+`runtime/projection` is one-way by design: the run log is the system of record for
+execution, the database is identity plus the read model. If the two ever disagree, the log
+is right and the projection needs re-running.
+
+
 ## Runtime unavailable
 
 1. Acknowledge the alert and freeze connector effects. Keep the UI fail-closed.

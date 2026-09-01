@@ -168,10 +168,18 @@ class SchedulingTest(unittest.TestCase):
         self.assertEqual(slept, [])  # never sleeps after the final pass
 
     def test_a_sweep_creates_no_database_unless_one_is_configured(self):
-        from runtime.projection import default_db
+        import os
+        from unittest.mock import patch
+        # The default path has to be one this test owns. Reading the repo's real
+        # runtime/data/myorg.db made this pass only on a machine where nobody had run the
+        # bootstrap -- and setting MYORG_DB instead would *be* configuring a store, which
+        # is the opposite of what this test is about.
+        unasked = Path(self._tmp.name) / "unasked-for.db"
+        os.environ.pop("MYORG_DB", None)
         self.create("sch-nodb")
-        self.scheduler.sweep(self.backend, log=self.logs.append)
-        self.assertFalse(default_db().is_file(),
+        with patch("runtime.projection.default_db", return_value=unasked):
+            self.scheduler.sweep(self.backend, log=self.logs.append)
+        self.assertFalse(unasked.is_file(),
                          "the driver must not conjure a store nobody asked for")
 
     def test_a_sweep_mirrors_into_a_store_when_one_is_configured(self):

@@ -243,7 +243,7 @@ marked **(new)**.
 |---|---|---|---|---|---|---|---|
 | ARCH-01 | One state architecture | ✅ | Log = execution SoR; SQLite = identity + read model; one-way projection | Control Center reads old shape | — | P1 | `projection.py`, mig 004, 15 tests |
 | ARCH-02 | Cross-platform runtime | ✅ | `filelock.py` POSIX/Windows | — | — | — | 5/5 `test_filelock` |
-| ARCH-06 **(new)** | Store instantiated on a real host | ⛔ | Migrations + code | `runtime/data/` never created; projection unexercised outside tests | — | P1 | `ls runtime/data` → absent |
+| ARCH-06 **(new)** | Store instantiated on a real host | ✅ | `admin bootstrap` creates store + org + first operator + token in one idempotent command and prints the next steps; refuses without `MYORG_AUTH_SECRET`. Run for real here: 4 gold runs projected, and a live run was parked, decided over HTTP, and agreed across run log, read model and audit log | Single host; no managed identity yet (PROD-02) | — | ~~P1~~ done | 9 tests; `runtime/data/myorg.db` exists, `admin verify` → integrity ok |
 | WF-01…07,12 | Schema, DAG, hash chain, idempotency, caps, evidence, terminal states | ✅ | All present | — | — | — | `company_runtime.py` |
 | WF-08 | Goal → workflow | ✅ | `planner.py`, validator-checked, 3 repairs | Not data-informed | G1 | P1 | 9 tests; `fix-onboarding` |
 | WF-09 | Workflow library | ⛔ | 2 gold-run proofs | Real business workflows | WF-08, G1 | P1 | `runtime/workflows/` |

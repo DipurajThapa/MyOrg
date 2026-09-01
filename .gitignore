@@ -20,3 +20,4 @@ runtime/runs/_leases.json
 logs/*.lock
 apichk-*/
 tmp*/
+runtime/runs/*.wf.json

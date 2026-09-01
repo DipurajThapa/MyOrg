@@ -22,6 +22,12 @@ def identifier(value: str) -> str:
     return value
 
 
+# What one operator needs on day one: answer the gates, and prepare work to be gated.
+# Anything wider -- connectors, other people's identities, recovery -- is a deliberate
+# second step, not something a first run hands out quietly.
+STARTING_ROLES = ("decision-owner", "maker")
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description="MyOrg offline administration (requires host access)")
     result.add_argument("--db", default=os.environ.get("MYORG_DB", "runtime/data/myorg.db"))
@@ -29,6 +35,13 @@ def parser() -> argparse.ArgumentParser:
     init = commands.add_parser("init")
     init.add_argument("--org", required=True, type=identifier)
     init.add_argument("--name", required=True)
+    boot = commands.add_parser("bootstrap", help="stand a new company up: store, organization, first operator, token")
+    boot.add_argument("--org", required=True, type=identifier)
+    boot.add_argument("--name", required=True)
+    boot.add_argument("--operator", required=True, type=identifier)
+    boot.add_argument("--operator-name", required=True)
+    boot.add_argument("--role", action="append", choices=sorted(ROLES))
+    boot.add_argument("--ttl", type=int, default=900)
     actor = commands.add_parser("actor")
     actor.add_argument("--org", required=True, type=identifier)
     actor.add_argument("--id", required=True, type=identifier)
@@ -72,7 +85,33 @@ def main(argv: list[str] | None = None) -> int:
     store = Store(args.db)
     if args.command != "restore":
         store.migrate()
-    if args.command == "init":
+    if args.command == "bootstrap":
+        secret = os.environ.get("MYORG_AUTH_SECRET")
+        if not secret:
+            raise SystemExit(
+                "MYORG_AUTH_SECRET is required before bootstrapping: the store would be "
+                "created with nobody able to sign in. Generate one with "
+                "`python -c \"import secrets;print(secrets.token_hex(32))\"` and export it.")
+        roles = sorted(set(args.role or STARTING_ROLES))
+        # Every step is idempotent, so a half-finished bootstrap is safe to run again.
+        store.bootstrap_organization(args.org, args.name)
+        store.upsert_actor(args.org, args.operator, "human", args.operator_name, roles)
+        token = TokenService(store, secret).issue(args.org, args.operator, args.ttl)
+        database = str(Path(args.db).resolve())
+        print(json.dumps({"organization": args.org, "operator": args.operator,
+                          "roles": roles, "database": database, "token": token,
+                          "token_ttl_seconds": args.ttl}, sort_keys=True))
+        print()
+        print("The company now exists. To run it:")
+        print(f"  export MYORG_DB={database}")
+        print("  export MYORG_AUTH_SECRET=<the same secret you just used>")
+        print("  python -m runtime.api                 # the governed API")
+        print("  python -m runtime.projection          # mirror runs into the read model")
+        print("  python -m runtime.scheduler --once    # drive whatever can move")
+        print()
+        print(f"The token above expires in {args.ttl}s and is a bearer credential: keep it out")
+        print("of shell history, logs and tickets. Issue another with `issue-token`.")
+    elif args.command == "init":
         store.bootstrap_organization(args.org, args.name)
         print(json.dumps({"organization": args.org, "status": "ready"}))
     elif args.command == "actor":

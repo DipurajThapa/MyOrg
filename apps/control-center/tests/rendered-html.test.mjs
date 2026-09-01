@@ -41,7 +41,21 @@ test("renders development preview metadata", async () => {
   assert.match(html, /Frame the work/i);
   assert.match(html, /Release gate/i);
   assert.match(html, /Begin project intake/i);
-  assert.match(html, /Maker-checker validation/i);
+  // The overview shows what is really waiting on a person. Server-side there is no
+  // session yet, so the honest render is the loading/empty state -- never invented work.
+  assert.match(html, /WAITING ON YOU/i);
+  assert.match(html, /Reading|Nothing needs you/i);
+  assert.match(html, /Open queue/i);
+  assert.match(html, /you can decide/i);
+  // Guard against the regression this replaced: the panel used to ship a fabricated run
+  // ("Maker-checker validation", "13 / 24 cycles") that no runtime had ever produced, and
+  // two Preview buttons that did nothing. If invented run data returns, fail here.
+  assert.doesNotMatch(html, /\d+\s*(?:<!--[^>]*-->\s*)?\/\s*(?:<!--[^>]*-->\s*)?\d+\s*cycles/i,
+    "the overview must not ship hard-coded run progress");
+  assert.doesNotMatch(html, /maker-checker-validation|RUN-0001/i,
+    "the overview must not ship a hard-coded run id");
+  assert.doesNotMatch(html, /Preview approve|Preview return/i,
+    "decision controls must call the runtime, not preview a decision that never happens");
   assert.match(html, /Governed · durable/i);
   assert.match(html, /Skip to main content/i);
   assert.match(html, /id="main-content"/i);
