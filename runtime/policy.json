@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "actions": {
+    "research": "green",
+    "analyze": "green",
+    "draft": "green",
+    "validate": "green",
+    "internal_write": "green",
+    "external_send": "yellow",
+    "publish": "yellow",
+    "commit_spend": "yellow",
+    "sign": "yellow",
+    "change_settings": "yellow",
+    "create_automation": "yellow",
+    "move_money": "red",
+    "handle_credentials": "red",
+    "change_access": "red",
+    "permanent_delete": "red",
+    "bypass_security": "red"
+  }
+}

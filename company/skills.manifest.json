@@ -1,0 +1,769 @@
+{
+  "version": 1,
+  "note": "External skills these departments reference. Declared, not proven: each is expected from the environment the agents run in, and is unverified until it has actually been invoked here.",
+  "skills": {
+    "anthropic-skills:brand-guidelines": {
+      "family": "anthropic-skills",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "anthropic-skills:canvas-design": {
+      "family": "anthropic-skills",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "anthropic-skills:internal-comms": {
+      "family": "anthropic-skills",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "anthropic-skills:mcp-builder": {
+      "family": "anthropic-skills",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "anthropic-skills:skill-creator": {
+      "family": "anthropic-skills",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "anthropic-skills:theme-factory": {
+      "family": "anthropic-skills",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "anthropic-skills:web-artifacts-builder": {
+      "family": "anthropic-skills",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "anthropic-skills:xlsx": {
+      "family": "anthropic-skills",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "artifact-design": {
+      "family": "ungrouped",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "brand-voice:discover-brand": {
+      "family": "brand-voice",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "brand-voice:enforce-voice": {
+      "family": "brand-voice",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "brand-voice:generate-guidelines": {
+      "family": "brand-voice",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "claude-api": {
+      "family": "ungrouped",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "code-review": {
+      "family": "ungrouped",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "cowork-plugin-management:cowork-plugin-customizer": {
+      "family": "cowork-plugin-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "cowork-plugin-management:create-cowork-plugin": {
+      "family": "cowork-plugin-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "customer-support:customer-escalation": {
+      "family": "customer-support",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "customer-support:customer-research": {
+      "family": "customer-support",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "customer-support:draft-response": {
+      "family": "customer-support",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "customer-support:kb-article": {
+      "family": "customer-support",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "customer-support:ticket-triage": {
+      "family": "customer-support",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "data:analyze": {
+      "family": "data",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "data:build-dashboard": {
+      "family": "data",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "data:create-viz": {
+      "family": "data",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "data:data-context-extractor": {
+      "family": "data",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "data:data-visualization": {
+      "family": "data",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "data:explore-data": {
+      "family": "data",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "data:sql-queries": {
+      "family": "data",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "data:statistical-analysis": {
+      "family": "data",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "data:validate-data": {
+      "family": "data",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "data:write-query": {
+      "family": "data",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "dataviz": {
+      "family": "ungrouped",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "deep-research": {
+      "family": "ungrouped",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "design:accessibility-review": {
+      "family": "design",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "design:design-critique": {
+      "family": "design",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "design:design-handoff": {
+      "family": "design",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "design:design-system": {
+      "family": "design",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "design:research-synthesis": {
+      "family": "design",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "design:user-research": {
+      "family": "design",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "design:ux-copy": {
+      "family": "design",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "engineering:architecture": {
+      "family": "engineering",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "engineering:code-review": {
+      "family": "engineering",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "engineering:debug": {
+      "family": "engineering",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "engineering:deploy-checklist": {
+      "family": "engineering",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "engineering:documentation": {
+      "family": "engineering",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "engineering:incident-response": {
+      "family": "engineering",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "engineering:standup": {
+      "family": "engineering",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "engineering:system-design": {
+      "family": "engineering",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "engineering:tech-debt": {
+      "family": "engineering",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "engineering:testing-strategy": {
+      "family": "engineering",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "enterprise-search:digest": {
+      "family": "enterprise-search",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "enterprise-search:knowledge-synthesis": {
+      "family": "enterprise-search",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "enterprise-search:search": {
+      "family": "enterprise-search",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "enterprise-search:search-strategy": {
+      "family": "enterprise-search",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "enterprise-search:source-management": {
+      "family": "enterprise-search",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "figma:figma-design-to-code": {
+      "family": "figma",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "figma:figma-generate-design": {
+      "family": "figma",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "figma:figma-generate-diagram": {
+      "family": "figma",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "figma:figma-use": {
+      "family": "figma",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "finance:audit-support": {
+      "family": "finance",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "finance:close-management": {
+      "family": "finance",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "finance:financial-statements": {
+      "family": "finance",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "finance:journal-entry": {
+      "family": "finance",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "finance:journal-entry-prep": {
+      "family": "finance",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "finance:reconciliation": {
+      "family": "finance",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "finance:sox-testing": {
+      "family": "finance",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "finance:variance-analysis": {
+      "family": "finance",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "human-resources:comp-analysis": {
+      "family": "human-resources",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "human-resources:draft-offer": {
+      "family": "human-resources",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "human-resources:interview-prep": {
+      "family": "human-resources",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "human-resources:onboarding": {
+      "family": "human-resources",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "human-resources:org-planning": {
+      "family": "human-resources",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "human-resources:people-report": {
+      "family": "human-resources",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "human-resources:performance-review": {
+      "family": "human-resources",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "human-resources:policy-lookup": {
+      "family": "human-resources",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "human-resources:recruiting-pipeline": {
+      "family": "human-resources",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "init": {
+      "family": "ungrouped",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "legal:brief": {
+      "family": "legal",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "legal:compliance-check": {
+      "family": "legal",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "legal:legal-response": {
+      "family": "legal",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "legal:legal-risk-assessment": {
+      "family": "legal",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "legal:meeting-briefing": {
+      "family": "legal",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "legal:review-contract": {
+      "family": "legal",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "legal:signature-request": {
+      "family": "legal",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "legal:triage-nda": {
+      "family": "legal",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "legal:vendor-check": {
+      "family": "legal",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "marketing:brand-review": {
+      "family": "marketing",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "marketing:campaign-plan": {
+      "family": "marketing",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "marketing:competitive-brief": {
+      "family": "marketing",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "marketing:content-creation": {
+      "family": "marketing",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "marketing:draft-content": {
+      "family": "marketing",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "marketing:email-sequence": {
+      "family": "marketing",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "marketing:performance-report": {
+      "family": "marketing",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "marketing:seo-audit": {
+      "family": "marketing",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "operations:capacity-plan": {
+      "family": "operations",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "operations:change-request": {
+      "family": "operations",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "operations:compliance-tracking": {
+      "family": "operations",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "operations:process-doc": {
+      "family": "operations",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "operations:process-optimization": {
+      "family": "operations",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "operations:risk-assessment": {
+      "family": "operations",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "operations:runbook": {
+      "family": "operations",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "operations:status-report": {
+      "family": "operations",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "operations:vendor-review": {
+      "family": "operations",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "product-management:brainstorm": {
+      "family": "product-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "product-management:competitive-brief": {
+      "family": "product-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "product-management:metrics-review": {
+      "family": "product-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "product-management:product-brainstorming": {
+      "family": "product-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "product-management:roadmap-update": {
+      "family": "product-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "product-management:sprint-planning": {
+      "family": "product-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "product-management:stakeholder-update": {
+      "family": "product-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "product-management:synthesize-research": {
+      "family": "product-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "product-management:write-spec": {
+      "family": "product-management",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "run": {
+      "family": "ungrouped",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "sales:account-research": {
+      "family": "sales",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "sales:call-prep": {
+      "family": "sales",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "sales:call-summary": {
+      "family": "sales",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "sales:competitive-intelligence": {
+      "family": "sales",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "sales:create-an-asset": {
+      "family": "sales",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "sales:daily-briefing": {
+      "family": "sales",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "sales:draft-outreach": {
+      "family": "sales",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "sales:forecast": {
+      "family": "sales",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "sales:pipeline-review": {
+      "family": "sales",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "security-review": {
+      "family": "ungrouped",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    },
+    "verify": {
+      "family": "ungrouped",
+      "provider": "claude-code-environment",
+      "status": "expected-from-environment",
+      "verified_here": false
+    }
+  },
+  "families": {
+    "data": 10,
+    "engineering": 10,
+    "human-resources": 9,
+    "legal": 9,
+    "operations": 9,
+    "product-management": 9,
+    "sales": 9,
+    "ungrouped": 9,
+    "anthropic-skills": 8,
+    "finance": 8,
+    "marketing": 8,
+    "design": 7,
+    "customer-support": 5,
+    "enterprise-search": 5,
+    "figma": 4,
+    "brand-voice": 3,
+    "cowork-plugin-management": 2
+  }
+}

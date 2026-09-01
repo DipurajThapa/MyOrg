@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "source_revision": "REPLACE_WITH_IMMUTABLE_COMMIT_SHA",
+  "environment": "production-like",
+  "checks": {
+    "ci_passed": false,
+    "sbom_and_secret_scan_attached": false,
+    "managed_identity_lifecycle_tested": false,
+    "tenant_and_role_uat_passed": false,
+    "database_backup_restore_rpo_rto_passed": false,
+    "first_connector_oauth_and_reconciliation_passed": false,
+    "security_review_passed": false,
+    "privacy_decisions_approved": false,
+    "accessibility_human_uat_passed": false,
+    "observability_alerts_exercised": false,
+    "deployment_smoke_passed": false,
+    "rollback_rehearsal_passed": false
+  },
+  "evidence": {
+    "ci": null,
+    "identity_and_tenant": null,
+    "recovery": null,
+    "connector": null,
+    "security_privacy_accessibility": null,
+    "operations": null,
+    "deployment_and_rollback": null
+  },
+  "signoffs": {
+    "product_owner": null,
+    "security_owner": null,
+    "privacy_owner": null,
+    "accessibility_tester": null,
+    "operations_owner": null,
+    "release_decision_owner": null
+  },
+  "decision": "blocked"
+}

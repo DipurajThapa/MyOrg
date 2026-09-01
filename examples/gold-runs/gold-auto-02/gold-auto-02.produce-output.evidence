@@ -1,0 +1,144 @@
+ENGINEERING DELIVERABLE — Step: produce-output
+Owner: CTO / Engineering (cto-engineering)
+Goal: Prove one bounded cross-functional workflow before adding provider-driven automation
+Date: 2026-09-01
+
+---
+
+## 0. What this step delivers
+
+The Chief of Staff framed the goal, bounded the scope, and made the criteria binary. My job is not to re-frame it. My job is to say, as the person who owns the runtime, **exactly what has to exist in code and in recorded state for S1–S7 to be checkable by someone who was not in the room** — and to name, honestly, where today's runtime already does that and where it does not.
+
+This is the engineering contract for the walk. It is written so a future session can read it alone and reconstruct what was proven.
+
+I agree with the frame. One correction of emphasis, not of substance: the frame treats A1 ("the runtime can register a goal, carry step dependencies, and record evidence per step") as an assumption to be tested by the run. From the engineering side, A1 is only *half* true today, and I would rather say so now than let the run discover it as a surprise. Details in §3. This does not change the plan; it changes what we expect to find.
+
+---
+
+## 1. The system under test
+
+Component: `runtime/company_runtime.py`
+Recently changed: `StepRequest.prompt()` now carries dependency context via a `Handoff` dataclass (AGENT-09, completed today — observations 6737–6740). Before that change, a downstream step received the original request and nothing else, which is failure condition **F2** built directly into the code. That defect is fixed and has test coverage. This run is the first end-to-end exercise of the fix outside its own unit tests.
+
+Also recently changed and relevant: cross-platform runtime fixes (ARCH-02, S970/S971) — `fcntl` import failures and path translation on Windows. This matters because assumption **A4** is precisely about those. They passed their tests. A test suite passing is not the same as a full run passing on this machine; if they resurface, per A4 that is the finding.
+
+So: two recent fixes, both directly on the load-bearing path of this run. That is not a coincidence — it is why now is the right time to walk it.
+
+---
+
+## 2. What each success criterion means in code
+
+This is the translation layer. Each criterion becomes a thing you can point at.
+
+**S1 — goal registered, run traceable.**
+Mechanism: goal record created before the first step; every step row carries the goal id. Check: given the goal id alone, you can list every step in order with owner and status. If you have to read a chat transcript to reconstruct the order, S1 failed.
+
+**S2 — two-plus departments, contract before dispatch.**
+Mechanism: each step names an owning agent; the task contract (objective · context · inputs · constraints · expected output · acceptance criteria · decision authority · risks · checkpoint · escalation, per `company/playbooks.md`) is written into the step record *before* the agent is invoked, not appended after. Check: contract timestamp precedes dispatch timestamp; at least two distinct owner values across steps. Retro-fitted acceptance criteria are the classic way this criterion gets faked, and they are visible in the ordering.
+
+**S3 — durable artifact or recorded evidence per leg.**
+Mechanism: step output persisted verbatim (as this text is being persisted). Check: every step has non-empty recorded output, and for engineering legs specifically, output that asserts a fact about the system is accompanied by the command or file that shows it. "Tests pass" is a claim; the run output is evidence. Per my own charter — verify before claiming done — I hold engineering legs to the stricter bar.
+
+**S4 — downstream consumes upstream.**
+Mechanism: `Handoff` populates dependency context into the downstream prompt; integrity verification on load (AGENT-09).
+Check, and this is the sharpest one available: **this deliverable is itself the test.** I received the Chief of Staff's goal frame in full and I am building on it — citing S1–S7, F1–F5, A1–A4, D1–D3 by their own identifiers, agreeing with it in places and qualifying it in one. That could not be produced from the original request alone. If the recorded evidence for this step contains these references, S4 is demonstrated for at least one hop, by construction rather than by assertion. If a *later* step shows no trace of *this* one, S4 failed at that hop and the hop should be named.
+
+**S5 — a 🟡 gate reached, drafted, held.**
+Mechanism: governance classification per CLAUDE.md §3; drafted action recorded; execution not attempted; `audit-log` entry (`logs/audit-log.jsonl`) for drafted → approval requested.
+Check: an audit entry exists showing the action was drafted and approval was requested, with no matching "executed" entry, and no human "yes" in the record. Per A3, stopping here is a **pass**. The engineering failure mode to watch for is an agent narrating "approved" in prose — F3. Prose is not an approval. Only the log is.
+
+**S6 — no stop bypassed, no unverified "done".**
+Mechanism: runtime stops (revision/retry/maker-checker/evidence) fire as designed; step status transitions recorded.
+Check: no step status jumps to done without its verification field populated. Note the honest limit: the runtime records what agents report. It does not independently re-run an agent's claim. So S6 as recorded means "no step *reported* done without recording verification" — a weaker statement than "no step was wrong." Both are worth having; only one is what the log proves. Saying which is which is the difference between a record and a story.
+
+**S7 — one synthesized answer with clear status.**
+Mechanism: final step reads all prior step outputs and produces one answer plus a status of Done / Drafted & awaiting approval / Blocked on.
+Check: the status is one of the three, stated explicitly, and follows from the recorded evidence rather than from optimism.
+
+---
+
+## 3. Where I qualify assumption A1 — the honest engineering position
+
+The frame says the runtime "can register a goal, carry step dependencies, and record evidence per step," citing recent handoff work as suggesting yes.
+
+Carrying dependencies: yes, as of today, with tests. Registering a goal and recording per-step output: yes.
+
+The part I would not yet claim: **"evidence" and "output" are not the same thing, and the runtime currently records the second.** A step's recorded output is whatever the agent returned. If an agent writes "verified, all green," that string is recorded faithfully and is indistinguishable, at the storage layer, from a step that actually ran something. There is no structural separation between *claim* and *proof*.
+
+That is not a blocker for this run — it is arguably the single most valuable thing this run can surface, because it is exactly the property that provider-driven automation would multiply. A scheduler running an unproven loop at 3am produces confident logs and no truth. The frame's own reasoning ("automation repeats a loop; this run establishes that the loop is worth repeating") lands precisely here.
+
+So my position on A1: **partially true, and the gap is specific and nameable.** The run can still pass S1–S7 as written, because S3 and S6 are written against what the runtime records. A future step — explicitly *out of scope* for this run per §3 of the frame, and I am not going to widen it — is a distinct evidence field with a machine-checkable referent (a file path, a command and its exit code, a test id). I raise it here so it is on the record as a known limit rather than discovered later as a defect.
+
+---
+
+## 4. Engineering acceptance criteria for this step
+
+This step is `internal_write`. Its own "done" is:
+
+1. The engineering contract for S1–S7 is written in checkable terms — §2. ✅
+2. The system under test is named with its recent changes and their risk — §1. ✅
+3. Assumption A1 is assessed by the component owner rather than left as an untested premise — §3. ✅
+4. The step demonstrably consumes upstream handoff context — §2, S4, by construction. ✅
+5. No scope widened into automation, new capability, or unrelated fixes (F4) — nothing here proposes building anything. The A1 gap is named and explicitly deferred. ✅
+6. No claim of a passing run, a deploy, or a verification I did not perform. ✅
+
+On (6), stated plainly because it is the criterion most easily violated by an engineering deliverable: **I have not executed the runtime in this step.** This step is a written work product. Every factual claim about the codebase above comes from the recorded session history for today (S970, S971, 6737–6740, AGENT-05, AGENT-09) and from `CLAUDE.md`. Nothing here asserts an observed run result. If a later step needs "the runtime executes this walk on Windows without path or locking errors," that is a separate leg requiring actual execution, and it must produce command output, not prose.
+
+---
+
+## 5. Risks to the walk, ranked
+
+**R1 — High: the gate gets narrated instead of held.**
+An agent reaching a 🟡 action writes "approved and proceeding." F3, and it silently invalidates S5. Mitigation: S5 is checked against `logs/audit-log.jsonl`, not against step prose. If the log has no approval-requested entry, S5 failed regardless of what any step says.
+
+**R2 — Medium: Windows path/locking resurfaces mid-run.**
+ARCH-02 is fixed and tested, but this run exercises a longer path than the tests do. Mitigation: per A4, report **Blocked on** with the specific breakage — file, line, error — not a general "runtime issues." A named breakage is a finding; an unnamed one is noise.
+
+**R3 — Medium: S3 satisfied in letter, not spirit.**
+Every step records output, so S3 technically passes, while some outputs are claims rather than evidence. This is the §3 gap showing up as a false positive. Mitigation: at synthesis, state per-leg whether the recorded output is an artifact or an assertion. A run that passes S3 with four assertions and one artifact should say so.
+
+**R4 — Low: handoff context degrades over hops.**
+Hop one is demonstrated here. Hop three is not. Mitigation: at synthesis, check the last step for traces of the first. If absent, name the hop where the chain thinned.
+
+**R5 — Low: scope creep into fixing the A1 gap.**
+Tempting, because it is a real defect on the load-bearing path and I am the one who would fix it. F4 exists to stop precisely this. Not fixing it in this run.
+
+---
+
+## 6. On decision D3 — my recommendation to the human
+
+The frame asks whether a partial pass (five of seven, gaps named) unlocks automation work. Engineering view, since automation would run on my runtime:
+
+**S5 and S6 are non-negotiable. The other five can be partial.**
+
+S5 is the governance boundary — automation without a held gate is automation that acts unsupervised, which is the whole risk. S6 is the verification boundary — automation without it manufactures confident logs at scale, which is worse than no logs, because people trust them.
+
+S1, S2, S3, S4, S7 failing partially tells us the plumbing needs work. That is fixable and visible. S5 or S6 failing tells us the loop cannot be trusted unattended, and repeating it faster makes things worse rather than better. That is the asymmetry I would ask the human to weigh.
+
+On D1 (which request serves as the test case): I agree with the Chief of Staff — real work over synthetic. Synthetic requests produce clean handoffs because the ambiguity that breaks handoffs was removed when the example was written. The handoff failures worth catching only appear where a real request is genuinely underspecified.
+
+---
+
+## 7. Handoff to the next step
+
+What the next step should carry forward:
+
+- **The checks in §2** — use them; they are the acceptance criteria for the run, not general advice.
+- **The A1 qualification in §3** — the runtime records output, not evidence. Do not report S3/S6 as stronger than what the log supports.
+- **S4 is partially demonstrated already** by this deliverable. Extend the check to your own hop rather than restarting it.
+- **The §5 risks**, R1 above all — check the audit log, not the prose.
+- **Nothing in §3 is to be built during this run.** It is a named, deferred finding.
+
+What I am **not** handing over, because I did not do it: any executed runtime evidence. This step produced a written contract. If the walk needs proof the runtime survives the full path on this machine, that is an execution leg someone still has to run.
+
+---
+
+## STATUS
+
+**Done** — engineering contract produced, verified against this step's own acceptance criteria (§4).
+
+Verified how: this is an `internal_write` step; its deliverable is the written contract itself, checked item by item against §4 (1–6), each traceable to a numbered section above. Consumption of upstream handoff context is verifiable in the text by its use of the Chief of Staff's own identifiers (S1–S7, F1–F5, A1–A4, D1–D3).
+
+Not verified, and not claimed: any runtime execution, test run, or deploy. None was performed in this step.
+
+Open for the human: **D3** — my recommendation is that S5 and S6 are hard requirements for unlocking automation, and the remaining five may be partial with gaps named (§6).

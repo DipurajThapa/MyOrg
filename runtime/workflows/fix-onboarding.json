@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "id": "fix-onboarding",
+  "goal": "Diagnose why our largest customer's onboarding takes too long and ship a fix, ending with an approved response back to the customer.",
+  "max_cycles": 72,
+  "steps": [
+    {
+      "id": "gather-account-context",
+      "owner": "customer-success",
+      "action": "research",
+      "depends_on": [],
+      "max_attempts": 2,
+      "acceptance": [
+        "Names the account, contract value, renewal date, and who raised the complaint",
+        "Lists each onboarding milestone with its actual date and the days spent in it",
+        "Quotes the customer's own words about what felt slow, with source"
+      ]
+    },
+    {
+      "id": "map-onboarding-process",
+      "owner": "coo-operations",
+      "action": "internal_write",
+      "depends_on": [
+        "gather-account-context"
+      ],
+      "max_attempts": 3,
+      "checker": "cpo-product",
+      "max_review_cycles": 2,
+      "acceptance": [
+        "Documents every onboarding step end to end with the owning team and handoff point",
+        "Marks each step's target duration versus the observed duration for this account",
+        "Flags every step with no named owner or no defined SLA"
+      ]
+    },
+    {
+      "id": "quantify-onboarding-delay",
+      "owner": "head-of-data",
+      "action": "analyze",
+      "depends_on": [
+        "gather-account-context",
+        "map-onboarding-process"
+      ],
+      "max_attempts": 3,
+      "checker": "revops",
+      "max_review_cycles": 2,
+      "acceptance": [
+        "Reports median and p90 time-to-value across all customers, not just this one",
+        "Ranks onboarding steps by total delay contributed, with the numbers shown",
+        "States sample size and any data gaps that weaken the ranking"
+      ]
+    },
+    {
+      "id": "diagnose-product-friction",
+      "owner": "cpo-product",
+      "action": "analyze",
+      "depends_on": [
+        "quantify-onboarding-delay"
+      ],
+      "max_attempts": 2,
+      "acceptance": [
+        "Separates delays caused by the product from delays caused by people or process",
+        "Names the top three product friction points with evidence from step data",
+        "States which friction points block go-live versus merely annoy"
+      ]
+    },
+    {
+      "id": "assess-technical-blockers",
+      "owner": "cto-engineering",
+      "action": "analyze",
+      "depends_on": [
+        "diagnose-product-friction"
+      ],
+      "max_attempts": 2,
+      "acceptance": [
+        "Confirms or rejects each product friction point against the actual system behavior",
+        "Gives a rough build size (small/medium/large) for fixing each confirmed blocker",
+        "Lists any blocker that is a config or data issue rather than a code issue"
+      ]
+    },
+    {
+      "id": "review-onboarding-security-gates",
+      "owner": "security-grc",
+      "action": "analyze",
+      "depends_on": [
+        "map-onboarding-process"
+      ],
+      "max_attempts": 2,
+      "acceptance": [
+        "Lists every security, questionnaire, or access-review gate inside onboarding with its typical duration",
+        "States which gates are genuinely required and which are habit",
+        "Proposes a faster path for required gates without weakening the control"
+      ]
+    },
+    {
+      "id": "review-contract-and-legal-gates",
+      "owner": "clo-legal",
+      "action": "analyze",
+      "depends_on": [
+        "map-onboarding-process"
+      ],
+      "max_attempts": 2,
+      "acceptance": [
+        "Lists contract, DPA, and signature steps in onboarding with observed turnaround times",
+        "Identifies clauses or redline loops that repeatedly stall onboarding",
+        "States any legal step that cannot be shortened and why"
+      ]
+    },
+    {
+      "id": "root-cause-synthesis",
+      "owner": "chief-of-staff",
+      "action": "analyze",
+      "depends_on": [
+        "quantify-onboarding-delay",
+        "diagnose-product-friction",
+        "assess-technical-blockers",
+        "review-onboarding-security-gates",
+        "review-contract-and-legal-gates"
+      ],
+      "max_attempts": 3,
+      "checker": "coo-operations",
+      "max_review_cycles": 2,
+      "acceptance": [
+        "States the top three root causes ranked by days of delay they explain",
+        "Traces each root cause to named evidence from an earlier step",
+        "Explicitly says what was ruled out and why"
+      ]
+    },
+    {
+      "id": "draft-fix-plan",
+      "owner": "cpo-product",
+      "action": "draft",
+      "depends_on": [
+        "root-cause-synthesis"
+      ],
+      "max_attempts": 3,
+      "checker": "coo-operations",
+      "max_review_cycles": 2,
+      "acceptance": [
+        "Every root cause has at least one fix with a named owning department",
+        "Each fix has a target date and a measurable before/after number",
+        "Separates quick fixes shippable this month from longer builds"
+      ]
+    },
+    {
+      "id": "redesign-onboarding-runbook",
+      "owner": "coo-operations",
+      "action": "internal_write",
+      "depends_on": [
+        "draft-fix-plan"
+      ],
+      "max_attempts": 3,
+      "checker": "customer-success",
+      "max_review_cycles": 2,
+      "acceptance": [
+        "Gives the new step-by-step onboarding flow with one named owner per step",
+        "Sets an SLA in days for every step and a total time-to-value target",
+        "Shows what changed versus the old flow in a short before/after list"
+      ]
+    },
+    {
+      "id": "define-onboarding-metrics",
+      "owner": "head-of-data",
+      "action": "internal_write",
+      "depends_on": [
+        "redesign-onboarding-runbook"
+      ],
+      "max_attempts": 2,
+      "acceptance": [
+        "Defines time-to-value and per-step duration metrics with exact calculation rules",
+        "Sets a baseline number and a target number for each metric",
+        "Names where each metric is measured and how often it is refreshed"
+      ]
+    },
+    {
+      "id": "validate-fix-plan-feasibility",
+      "owner": "cto-engineering",
+      "action": "validate",
+      "depends_on": [
+        "draft-fix-plan",
+        "redesign-onboarding-runbook"
+      ],
+      "max_attempts": 2,
+      "acceptance": [
+        "Confirms each engineering fix is buildable within its stated target date",
+        "Flags any fix that depends on work not yet scoped or staffed",
+        "Gives a clear go/no-go per engineering item"
+      ]
+    },
+    {
+      "id": "cost-and-capacity-check",
+      "owner": "cfo-finance",
+      "action": "analyze",
+      "depends_on": [
+        "draft-fix-plan"
+      ],
+      "max_attempts": 2,
+      "acceptance": [
+        "Estimates cost and headcount time for the plan against the account's revenue at risk",
+        "States whether any item needs new spend approval and how much",
+        "Gives a plain recommendation on whether the plan is worth funding"
+      ]
+    },
+    {
+      "id": "draft-customer-response",
+      "owner": "customer-success",
+      "action": "draft",
+      "depends_on": [
+        "root-cause-synthesis",
+        "redesign-onboarding-runbook",
+        "validate-fix-plan-feasibility"
+      ],
+      "max_attempts": 3,
+      "checker": "cmo-marketing",
+      "max_review_cycles": 2,
+      "acceptance": [
+        "Names what we found, what we are changing, and by when, in plain language",
+        "Makes no commitment that the validated plan does not already support",
+        "Includes a concrete next check-in date with the customer"
+      ]
+    },
+    {
+      "id": "human-decision-package",
+      "owner": "chief-of-staff",
+      "action": "internal_write",
+      "depends_on": [
+        "cost-and-capacity-check",
+        "define-onboarding-metrics",
+        "draft-customer-response"
+      ],
+      "max_attempts": 2,
+      "acceptance": [
+        "Lists every item needing a human yes: spend, customer message, process change",
+        "States the recommendation and the risk of doing nothing for each item",
+        "Fits on one page a busy executive can decide from"
+      ]
+    },
+    {
+      "id": "send-customer-response",
+      "owner": "customer-success",
+      "action": "external_send",
+      "depends_on": [
+        "human-decision-package"
+      ],
+      "max_attempts": 2
+    },
+    {
+      "id": "publish-new-runbook",
+      "owner": "coo-operations",
+      "action": "publish",
+      "depends_on": [
+        "human-decision-package"
+      ],
+      "max_attempts": 2
+    },
+    {
+      "id": "activate-onboarding-sla-tracking",
+      "owner": "revops",
+      "action": "create_automation",
+      "depends_on": [
+        "human-decision-package"
+      ],
+      "max_attempts": 2
+    }
+  ]
+}

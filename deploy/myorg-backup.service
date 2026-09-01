@@ -1,0 +1,18 @@
+[Unit]
+Description=MyOrg verified database backup
+After=myorg-api.service
+
+[Service]
+Type=oneshot
+User=myorg
+Group=myorg
+WorkingDirectory=/opt/myorg
+EnvironmentFile=/etc/myorg/myorg.env
+ExecStart=/opt/myorg/scripts/backup_runtime.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/myorg

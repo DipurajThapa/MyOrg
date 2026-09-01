@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "id": "manual-gold-run",
+  "goal": "Prove one bounded cross-functional workflow before adding provider-driven automation",
+  "max_cycles": 12,
+  "steps": [
+    {"id":"frame-goal","owner":"chief-of-staff","action":"analyze","depends_on":[],"max_attempts":2},
+    {"id":"produce-output","owner":"cto-engineering","action":"internal_write","depends_on":["frame-goal"],"max_attempts":2},
+    {"id":"validate-output","owner":"coo-operations","action":"validate","depends_on":["produce-output"],"max_attempts":2},
+    {"id":"release-output","owner":"chief-of-staff","action":"publish","depends_on":["validate-output"],"max_attempts":1}
+  ]
+}

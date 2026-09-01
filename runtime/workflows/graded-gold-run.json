@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "id": "graded-gold-run",
+  "goal": "Prove that a step is judged against declared acceptance criteria, not merely that an agent replied",
+  "max_cycles": 20,
+  "steps": [
+    {"id":"frame-goal","owner":"chief-of-staff","action":"analyze","depends_on":[],"max_attempts":3,
+     "acceptance":["states one measurable outcome with a number or date","names the single accountable department","lists at least two explicit non-goals"]},
+    {"id":"produce-output","owner":"cto-engineering","action":"internal_write","depends_on":["frame-goal"],"max_attempts":3,
+     "acceptance":["addresses every non-goal the goal frame declared","states at least one risk with a named mitigation"]},
+    {"id":"release-output","owner":"chief-of-staff","action":"publish","depends_on":["produce-output"],"max_attempts":1}
+  ]
+}

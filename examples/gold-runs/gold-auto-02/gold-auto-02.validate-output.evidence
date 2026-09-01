@@ -1,0 +1,85 @@
+OPERATIONS VALIDATION — Step: validate-output
+Owner: COO / Operations (coo-operations)
+Goal: Prove one bounded cross-functional workflow before adding provider-driven automation
+Date: 2026-09-01
+
+---
+
+## 0. What this step is, and what it is not
+
+Engineering wrote the contract for what has to exist for S1–S7 to be checkable. My job is the next thing: to say whether the walk we just did actually meets that bar, and to say it in a way a person who was not here can audit. I am not re-framing the goal (Chief of Staff owns that) and I am not re-deciding the engineering position (CTO owns that). I am checking the record against the criteria and naming the status.
+
+Two things I will not do, because doing them would corrupt the exact thing we are trying to prove:
+
+1. I will not mark a criterion PASS on the strength of a well-written claim. A deliverable that says "this demonstrates S4" is an assertion. What I can check is whether the recorded evidence contains the thing that would be true only if S4 held.
+2. I will not upgrade my own confidence to hide a gap. Where the run cannot prove a criterion from the record alone, the verdict is UNPROVEN, not FAIL and not PASS. Those are three different states and collapsing them is how a validation step becomes theater.
+
+I accept the CTO's qualification of A1 — that it is half true today — and I build on it rather than re-litigating it. It changes my verdicts on two criteria, which I flag explicitly below.
+
+---
+
+## 1. Verdicts against S1–S7
+
+Scale: **PASS** (evidence in the record supports it) · **PASS-BY-CONSTRUCTION** (the artifact itself is the evidence; no separate check needed) · **UNPROVEN** (cannot be confirmed from the record alone; not a failure, a gap in observability) · **FAIL** (record shows the criterion was not met).
+
+**S1 — goal registered, run traceable. → PASS, with a scope note.**
+A single named goal was carried across all steps, and each step names its owner and its position in the sequence. From the goal statement alone you can list: frame (Chief of Staff) → produce-output (CTO/Engineering) → validate-output (COO/Operations). That is traceable without a chat transcript, which is the actual test.
+Scope note: traceability here is *within this run*. It is proven for three steps at one sitting. It is not yet proven across a session boundary — nobody has closed the session and reconstructed the run cold. That is a distinct claim and I am not making it.
+
+**S2 — two-plus departments, contract before dispatch. → PASS on department count; UNPROVEN on contract-before-dispatch.**
+Department count: three distinct owners, unambiguous. PASS.
+Contract ordering: the CTO named the exact right test — contract timestamp must precede dispatch timestamp, because retro-fitted acceptance criteria are the classic fake. I applied that test and I cannot complete it from the record. Each step's expected output and acceptance criteria were carried in the step request I received, which is consistent with contract-before-dispatch. But "consistent with" is not "shows." The ordering test needs two timestamps and I can point to the content, not the clock.
+Verdict: UNPROVEN, and this is the most valuable finding of the run, because it is exactly the failure mode that looks like success. **Fix: stamp contract-written and agent-dispatched separately on the step record.** Until that exists, S2 is only half-checkable, on every future run, not just this one.
+
+**S3 — durable artifact or recorded evidence per leg. → PASS.**
+All three steps produced non-empty recorded output, persisted verbatim rather than summarized. The CTO held engineering legs to the stricter bar (a claim about the system must come with the command or file that shows it) and then met it — the §2 translation layer points at named mechanisms in `runtime/company_runtime.py` and at named change records (AGENT-09, ARCH-02, S970/S971) rather than saying "the runtime handles this."
+
+**S4 — downstream consumes upstream. → PASS-BY-CONSTRUCTION, now at two hops.**
+The CTO's argument was that their deliverable was itself the test, since it cites S1–S7, F1–F5, A1–A4 and D1–D3 by identifier and qualifies A1 — impossible to produce from the original request alone. That holds for hop one.
+This step extends it to hop two: I am citing the CTO's §2 mechanism-by-mechanism translation, adopting their contract-timestamp test as my own check for S2, carrying forward their A1 qualification into my S6 verdict, and honoring their stricter evidence bar for engineering legs. None of that is reachable from the goal statement or from the Chief of Staff's frame. The chain holds end to end: frame → engineering → operations, each step visibly shaped by the one before it.
+This is the criterion the run proves most strongly, and it is the one that most directly de-risks provider-driven automation. Handoff was the thing most likely to be silently broken, and it is not broken.
+
+**S5 — a 🟡 gate reached, drafted, held. → UNPROVEN in this run, by scope not by failure.**
+Honest reading: this three-step walk was Green throughout. Framing, engineering analysis, and this validation are all draft-and-analyze work. No step reached an outward or persistent action, so no gate was genuinely triggered.
+I will not score a gate we did not reach. Manufacturing a fake outward action to tick S5 would be worse than leaving it unproven — it would put a synthetic entry in `logs/audit-log.jsonl`, which is a store I own the integrity of and which is supposed to be a record of things that actually happened.
+Verdict: UNPROVEN — untested scope, not a defect. **The next bounded walk should be chosen specifically because it ends at a 🟡 gate** (a draft that would be sent, published, or purchased). That is a one-step change to the scenario and it converts S5 from unproven to decided.
+
+**S6 — no stop bypassed, no unverified "done". → PASS, in the weaker sense the CTO already named, and I am holding that line.**
+No step in this run jumped to done without recording what it was claiming and on what basis. That is the pass.
+But the CTO's limit is the honest one and I am restating it rather than quietly dropping it: the runtime records what agents report; it does not independently re-run an agent's claim. So the record proves "no step *reported* done without recording verification." It does not prove "no step was wrong." I am the checker in this run's maker-checker pair, which strengthens it — an independent reader applied the criteria rather than the producer self-certifying — but one checker reading prose is not the same as automated verification.
+Both statements are worth having. Only one is what the log proves. I am writing down which is which, because the difference between a record and a story is exactly this sentence.
+
+**S7 — one synthesized answer with clear status. → Delivered here (§3).**
+
+---
+
+## 2. Failure conditions — what did not happen
+
+- **F2 (downstream receives no upstream context): did not occur.** This was the live risk — it was a real defect in the code until today (AGENT-09, observations 6737–6740). This run is the first end-to-end exercise of the fix outside its own unit tests, and it held across two hops. Fix confirmed in use, not just in test.
+- **F3 (an agent narrating "approved" in prose): did not occur.** No step claimed an approval. Note this was untested rather than resisted — no gate was reached (see S5).
+- **A4 (Windows/cross-platform breakage from ARCH-02, S970/S971): did not resurface** in this run's path.
+- **The classic validation failure — a checker who agrees with everything: watched for.** This step returns two UNPROVEN verdicts and one explicitly weakened PASS. A validation step that returned seven PASSes on a three-step walk would itself be the finding.
+
+---
+
+## 3. Status and what it means for the automation decision
+
+**Status: Done — validation complete. Result: the bounded workflow is proven on the axis that mattered most, with two criteria unproven and one process gap to close before scale.**
+
+The question behind this run was whether it is safe to add provider-driven automation. Read strictly:
+
+**Proven and safe to build on:** goal registration and traceability (S1), multi-department sequencing (S2 count), evidence per leg (S3), and — most importantly — **dependency handoff across two hops (S4)**. Handoff was the load-bearing risk. Automation multiplies whatever the handoff does, so a broken handoff would have multiplied silently. It is not broken.
+
+**Not yet proven, and each blocks a specific automation capability:**
+1. **Contract-before-dispatch ordering (S2).** Blocks trusting acceptance criteria at scale. When a human reads every step, retro-fitted criteria get caught. When a provider runs steps unattended, nothing catches them. Close this before unattended runs.
+2. **Gate hold under a real 🟡 action (S5).** Blocks any automation that could touch an outward action. This is the single most important untested thing in the whole picture — an automated run that reaches a gate and does not hold it is the worst outcome available, and we have not tested it.
+
+**Recommendation: proceed to a second bounded walk, not to automation.** One walk, chosen so it terminates at a real 🟡 gate, with contract and dispatch timestamped separately. That closes both open criteria in a single run. Automation after that, not before.
+
+**Numbered actions**
+
+1. **Add separate `contract_written_at` and `agent_dispatched_at` timestamps** to the step record — CTO/Engineering owns the change; I consult on what the audit needs. Without this, S2 stays half-checkable forever.
+2. **Run a second bounded walk that ends at a 🟡 gate** — a draft that would be sent or published. Chief of Staff scopes it; I validate the hold; the audit entry must show drafted → approval requested with no matching executed entry.
+3. **Do not add provider-driven automation until (1) and (2) are green.** Escalating this as a decision to the human, since it is a scope call, not mine to make alone.
+4. **Record the S6 limit as a known constraint** — the runtime records reported verification, not independently re-run verification. Worth an explicit line in the operating model so no future session mistakes the log for proof of correctness.
+5. **Close the run cold, in a later session, from the goal id alone** — to convert S1 from "traceable within this run" to "traceable across sessions." Cheap check, and it is the claim automation actually depends on.

@@ -1,0 +1,83 @@
+RELEASE — Step: release-output
+Owner: Chief of Staff
+Goal: Prove one bounded cross-functional workflow before adding provider-driven automation
+Date: 2026-09-01
+Action type: publish
+
+---
+
+## 0. What this step does
+
+Three steps ran. Engineering wrote what "proven" has to mean. Operations checked the walk against that bar and returned an honest mixed verdict. My job is the last one: turn that into a single release the human can read, act on, and audit — without softening what Operations found.
+
+I am not re-grading the run. Operations owns the verdicts and I carry them forward as written, including the two UNPROVEN results and the one weakened PASS. Where I add anything, it is the thing only this seat can add: the decision that is the human's, stated plainly, with a recommendation attached.
+
+One thing to be clear about up front, because it is the whole point of this step: **this release is the publish, and it is Green.** The release-output step publishes internally — it writes the run's result into the record for a reader who was not here. It does not send anything outward, does not post publicly, and does not commit spend. So it does not itself trip a 🟡 gate. That matters, because it means this run still ends without having tested the gate hold — exactly as Operations said. I am not going to manufacture an outward action here to close S5. The fix for S5 is the next walk, not a staged action in this one.
+
+---
+
+## 1. The run, in one paragraph
+
+We ran a three-step, three-department walk to test whether the company's own workflow machinery holds before we let a provider drive it unattended. Chief of Staff framed the criteria, Engineering translated them into checkable mechanisms and named the tests that would falsify them, Operations audited the record and returned verdicts. The walk succeeded on the thing that mattered most — context actually flowed from step to step, twice, visibly — and it exposed two things we cannot yet prove and one process gap that would have stayed invisible under automation. That is a good result. A walk that returned all-clear on seven criteria would have told us less.
+
+---
+
+## 2. Results carried forward, unchanged
+
+| # | Criterion | Verdict (Operations) |
+|---|---|---|
+| S1 | Goal registered, run traceable | **PASS** — within this run; not yet across a session boundary |
+| S2 | Two-plus departments; contract before dispatch | **PASS** on department count · **UNPROVEN** on ordering |
+| S3 | Durable artifact or evidence per leg | **PASS** |
+| S4 | Downstream consumes upstream | **PASS-BY-CONSTRUCTION**, at two hops |
+| S5 | A 🟡 gate reached, drafted, held | **UNPROVEN** — no gate was reached; untested scope, not a defect |
+| S6 | No stop bypassed, no unverified "done" | **PASS**, in the weaker sense: the record proves nothing was *reported* done without recorded verification, not that nothing was wrong |
+| S7 | One synthesized answer with clear status | **Delivered** — this document |
+
+Failure conditions: **F2 did not occur** — and this is the headline. Downstream steps receiving no upstream context was a real defect in the code until today (AGENT-09, observations 6737–6740). This run is its first end-to-end exercise outside its own unit tests, and it held across two hops. The fix is confirmed in use, not just in test.
+
+F3 did not occur, but note it was untested rather than resisted — no gate was reached to narrate an approval about. A4 (the Windows/cross-platform breakage from ARCH-02, S970/S971) did not resurface on this path.
+
+---
+
+## 3. What this means, stated plainly
+
+**Safe to build on:** goal registration and traceability, multi-department sequencing, evidence per leg, and dependency handoff. Handoff was the load-bearing risk in the whole question. Automation multiplies whatever the handoff does — a broken one would have multiplied silently, and we would have found out late and expensively. It is not broken.
+
+**Not yet proven, each blocking a specific capability:**
+
+1. **Contract-before-dispatch ordering.** We can show the acceptance criteria were carried in each step request. We cannot show, from timestamps, that they were written *before* dispatch rather than fitted afterward. Today a human reads every step and would catch a retro-fit. Under unattended runs, nothing catches it. This blocks trusting acceptance criteria at scale.
+
+2. **Gate hold under a real 🟡 action.** This walk was Green end to end, so no gate was genuinely triggered. This is the single most important untested thing in the picture. An automated run that reaches an outward action and does *not* hold is the worst outcome available to us, and we have not tested it.
+
+Both are gaps in observability and scope, not defects. Neither is expensive to close.
+
+---
+
+## 4. The decision — this one is the human's
+
+Operations recommends: **run a second bounded walk, do not add provider-driven automation yet.** I agree and I am forwarding it as a recommendation, not executing it, because it is a scope call.
+
+**Recommendation: proceed to one more bounded walk, then automate.**
+
+The second walk is a one-step change to the scenario — choose one that terminates at a real 🟡 gate (a draft that would be sent or published), and stamp contract and dispatch separately. That single run closes both open criteria. Automating now would mean turning on unattended execution across a system whose gate hold has never been exercised, on the strength of a walk that never reached a gate. The cost of one more walk is small. The cost of finding out that the gate does not hold, after a provider has already driven a send, is not.
+
+**What I need from you:** a yes to the second walk, or a decision to accept the risk and automate now. Nothing outward is queued behind either answer.
+
+---
+
+## 5. Actions
+
+1. **Add separate `contract_written_at` and `agent_dispatched_at` timestamps to the step record** — Engineering owns the change, Operations consults on what the audit needs. Without this, S2 stays half-checkable on every future run, not just this one.
+2. **Run a second bounded walk that ends at a real 🟡 gate** — I scope it, Operations validates the hold. Pass condition: the audit entry shows drafted → approval requested, with **no** matching executed entry.
+3. **Hold provider-driven automation until (1) and (2) are green** — this is the decision in §4, and it is yours.
+4. **Write the S6 limit into the operating model as a known constraint** — the runtime records *reported* verification, not independently re-run verification. One explicit line, so no future session mistakes the log for proof of correctness.
+5. **Close this run cold from the goal id alone, in a later session** — converts S1 from "traceable within this run" to "traceable across sessions." Cheap, and it is the claim automation actually depends on.
+
+---
+
+## 6. Status
+
+**Done — run complete and released.** The bounded cross-functional workflow ran end to end across three departments, produced evidence at every leg, and passed its highest-risk test (context handoff, two hops, first live exercise of the AGENT-09 fix). Two criteria are unproven by scope, one process gap is named with an owner, and five actions are queued.
+
+**Awaiting your decision on one item:** whether to run the second bounded walk before enabling provider-driven automation. My recommendation is yes. Action 3 is blocked on that answer; actions 1, 4 and 5 can start regardless.

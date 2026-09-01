@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""Turns a goal in plain words into a workflow the runtime will accept.
+
+The Chief of Staff decomposes the goal into owned, dependency-ordered steps. Whatever
+comes back is validated against the real schema, and any errors are handed straight back
+for repair, so nothing reaches disk that `create-run` would reject.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from runtime import company_runtime as core  # noqa: E402
+from runtime.executor import (BACKENDS, ClaudeCliBackend, ExecutorError,  # noqa: E402
+                              agent_brief)
+
+PLANNER = "chief-of-staff"
+MAX_REPAIR_ATTEMPTS = 3
+CYCLES_PER_STEP = 4
+MAX_CYCLES_CEILING = 100
+JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def departments() -> list[str]:
+    return sorted(path.stem for path in (ROOT / ".claude" / "agents").glob("*.md"))
+
+
+def actions_by_risk() -> dict[str, list[str]]:
+    grouped: dict[str, list[str]] = {}
+    for action, risk in core.policy().items():
+        grouped.setdefault(risk, []).append(action)
+    return {risk: sorted(names) for risk, names in grouped.items()}
+
+
+@dataclass(frozen=True)
+class PlanRequest:
+    """Asks the Chief of Staff to decompose a goal into a runnable workflow."""
+    kind = "plan"
+    agent: str
+    goal: str
+    workflow_id: str
+    brief: str
+    feedback: str = ""
+
+    def rules(self) -> str:
+        risks = actions_by_risk()
+        return (
+            f"Owners must be exactly one of: {', '.join(departments())}\n"
+            f"Actions must be exactly one of these, and the risk word decides who may "
+            f"run the step:\n"
+            f"  green (an agent runs it alone): {', '.join(risks.get('green', []))}\n"
+            f"  yellow (stops for a human): {', '.join(risks.get('yellow', []))}\n"
+            f"  red (never automated): {', '.join(risks.get('red', []))}\n"
+            "Rules the runtime enforces and will reject you for breaking:\n"
+            "- step ids are lowercase slugs, unique, and may only use a-z 0-9 and -\n"
+            "- max_attempts is 1..5 on every step\n"
+            "- depends_on lists earlier step ids only; no cycles; no self-reference\n"
+            "- a `checker` is optional, must be a different department from the owner, "
+            "and may only sit on a green step; with it you must set max_review_cycles "
+            "1..3 and max_attempts at least max_review_cycles + 1\n"
+            "- `acceptance` is a list of short, checkable statements about the finished "
+            "work; give 2-3 for every green step\n"
+        )
+
+    def repair(self) -> str:
+        if not self.feedback:
+            return ""
+        return ("Your previous plan was rejected by the runtime. Fix exactly these "
+                f"errors:\n{self.feedback}\n\n")
+
+    def prompt(self) -> str:
+        return (
+            "You are the Chief of Staff. Turn this goal into a workflow your company can "
+            "actually run.\n\n"
+            f"GOAL: {self.goal}\n\n"
+            f"{self.repair()}"
+            f"{self.rules()}\n"
+            "Think about which department genuinely owns each piece of work, what order "
+            "the work has to happen in, and where a second pair of eyes is worth the "
+            "delay. Put any step that sends, publishes, buys, signs, or changes settings "
+            "last and give it a yellow action, so a human decides it.\n\n"
+            'Reply with JSON only -- no prose, no code fences. Shape:\n'
+            '{"version":1,"id":"' + self.workflow_id + '","goal":"...","max_cycles":N,'
+            '"steps":[{"id":"...","owner":"...","action":"...","depends_on":[],'
+            '"max_attempts":2,"acceptance":["...","..."]}]}\n'
+            "Do not use any tools."
+        )
+
+
+class StubPlannerBackend:
+    """Deterministic planner for tests. Never calls a model."""
+
+    def __call__(self, request) -> str:
+        return json.dumps({
+            "version": 1, "id": request.workflow_id, "goal": request.goal,
+            "max_cycles": 12,
+            "steps": [
+                {"id": "frame-goal", "owner": "chief-of-staff", "action": "analyze",
+                 "depends_on": [], "max_attempts": 2,
+                 "acceptance": ["states the outcome", "names the owner"]},
+                {"id": "produce-output", "owner": "cto-engineering",
+                 "action": "internal_write", "depends_on": ["frame-goal"],
+                 "max_attempts": 2, "acceptance": ["answers the goal"]},
+                {"id": "release-output", "owner": "chief-of-staff", "action": "publish",
+                 "depends_on": ["produce-output"], "max_attempts": 1},
+            ],
+        })
+
+
+def extract_json(text: str) -> dict:
+    """Models like to wrap JSON in prose or fences; take the outermost object."""
+    found = JSON_BLOCK.search(text)
+    if not found:
+        raise ExecutorError("planner returned no JSON object")
+    try:
+        return json.loads(found.group(0))
+    except json.JSONDecodeError as error:
+        raise ExecutorError(f"planner returned invalid JSON: {error}") from error
+
+
+def enforce_budget(workflow: dict) -> None:
+    """A plan that cannot finish inside its own cycle budget is a plan that deadlocks."""
+    steps = workflow.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return
+    needed = min(len(steps) * CYCLES_PER_STEP, MAX_CYCLES_CEILING)
+    if not isinstance(workflow.get("max_cycles"), int) or workflow["max_cycles"] < needed:
+        workflow["max_cycles"] = needed
+
+
+def validation_errors(workflow: dict) -> str:
+    try:
+        core.validate_workflow(workflow)
+    except SystemExit as error:
+        return str(error)
+    return ""
+
+
+def plan(goal: str, workflow_id: str, backend,
+         attempts: int = MAX_REPAIR_ATTEMPTS, log=print) -> dict:
+    """Ask for a workflow, and keep handing back the runtime's own errors until valid."""
+    feedback = ""
+    for attempt in range(1, attempts + 1):
+        request = PlanRequest(agent=PLANNER, goal=goal, workflow_id=workflow_id,
+                              brief=agent_brief(PLANNER), feedback=feedback)
+        try:
+            workflow = extract_json(backend(request))
+        except ExecutorError as error:
+            feedback = str(error)
+            log(f"  attempt {attempt}: {error}")
+            continue
+        workflow["id"] = workflow_id
+        enforce_budget(workflow)
+        feedback = validation_errors(workflow)
+        if not feedback:
+            log(f"  attempt {attempt}: valid plan with {len(workflow['steps'])} steps")
+            return workflow
+        log(f"  attempt {attempt}: rejected by the runtime -- {feedback.splitlines()[0]}")
+    raise ExecutorError(f"no valid plan after {attempts} attempts; last errors:\n{feedback}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("goal")
+    parser.add_argument("--id", required=True, help="workflow id (lowercase slug)")
+    parser.add_argument("--out", help="where to write it (default: runtime/workflows/<id>.json)")
+    parser.add_argument("--backend", choices=sorted(BACKENDS) + ["stub-planner"],
+                        default="claude")
+    parser.add_argument("--model")
+    parser.add_argument("--attempts", type=int, default=MAX_REPAIR_ATTEMPTS)
+    args = parser.parse_args(argv)
+
+    if not core.ID_RE.fullmatch(args.id):
+        print("workflow id must be a lowercase slug", file=sys.stderr)
+        return 1
+    backend = (StubPlannerBackend() if args.backend == "stub-planner"
+               else ClaudeCliBackend(args.model))
+    try:
+        workflow = plan(args.goal, args.id, backend, args.attempts)
+    except ExecutorError as error:
+        print(f"planning failed: {error}", file=sys.stderr)
+        return 1
+
+    destination = Path(args.out) if args.out else ROOT / "runtime" / "workflows" / f"{args.id}.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(workflow, indent=2) + "\n", encoding="utf-8")
+    print(destination.resolve().relative_to(ROOT))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

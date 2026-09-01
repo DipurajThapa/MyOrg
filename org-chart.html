@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENTERPRISE — The Company OS</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
+    --accent:#4f46e5; --accent-soft:#eef2ff; --chip:#f1f5f9;
+    --green:#16a34a; --amber:#d97706; --red:#dc2626;
+    --shadow:0 1px 2px rgba(15,23,42,.06),0 8px 24px rgba(15,23,42,.06);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0b1120; --panel:#111a2e; --ink:#e8edf6; --muted:#93a2ba; --line:#1e2a44;
+      --accent:#818cf8; --accent-soft:#1a2038; --chip:#16213a;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;padding:32px 20px 56px}
+  .wrap{max-width:1120px;margin:0 auto}
+  header{text-align:center;margin-bottom:8px}
+  h1{font-size:26px;margin:0 0 4px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:14px;margin:0 auto;max-width:640px}
+  .legend{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin:20px 0 28px;font-size:12.5px;color:var(--muted)}
+  .legend b{color:var(--ink);font-weight:600}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  .g{background:var(--green)} .a{background:var(--amber)} .r{background:var(--red)}
+
+  .boss{max-width:340px;margin:0 auto;background:var(--accent);color:#fff;border-radius:16px;
+    padding:16px 20px;text-align:center;box-shadow:var(--shadow)}
+  .boss .role{font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.85}
+  .boss .name{font-size:19px;font-weight:700;margin:2px 0 4px}
+  .boss code{background:rgba(255,255,255,.18);color:#fff;padding:1px 7px;border-radius:6px;font-size:12px}
+  .boss .desc{font-size:12.5px;opacity:.9;margin-top:6px}
+
+  .stem{width:2px;height:26px;background:var(--line);margin:0 auto}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px;margin-top:4px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);
+    display:flex;flex-direction:column;gap:8px;transition:transform .12s ease,border-color .12s ease}
+  .card:hover{transform:translateY(-2px);border-color:var(--accent)}
+  .top{display:flex;align-items:center;gap:10px}
+  .ico{width:34px;height:34px;flex:0 0 34px;border-radius:9px;background:var(--accent-soft);color:var(--accent);
+    display:grid;place-items:center;font-size:18px}
+  .role{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  .name{font-size:15.5px;font-weight:650;line-height:1.15}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .agent{font-size:11.5px;color:var(--accent)}
+  .agent code{background:var(--chip);padding:1px 6px;border-radius:5px}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
+  .chips span{background:var(--chip);color:var(--muted);font-size:11px;padding:2px 7px;border-radius:6px}
+  footer{margin-top:32px;text-align:center;color:var(--muted);font-size:12.5px}
+  footer code{background:var(--chip);padding:1px 6px;border-radius:5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🏢 ENTERPRISE</h1>
+    <p class="sub">A company run by Claude. Say what you need in plain language — the Chief of Staff routes it to the right department and coordinates the rest.</p>
+  </header>
+
+  <div class="legend">
+    <span><span class="dot g"></span><b>Green</b> — research &amp; draft freely</span>
+    <span><span class="dot a"></span><b>Yellow</b> — draft, then your approval</span>
+    <span><span class="dot r"></span><b>Red</b> — never; handed back to you</span>
+  </div>
+
+  <div class="boss">
+    <div class="role">Orchestrator</div>
+    <div class="name">Chief of Staff</div>
+    <code>chief-of-staff</code>
+    <div class="desc">Classifies every request, decomposes cross-functional work, dispatches specialists, synthesizes the answer.</div>
+  </div>
+  <div class="stem"></div>
+
+  <div class="grid">
+    <div class="card"><div class="top"><div class="ico">⚙️</div><div><div class="role">Engineering</div><div class="name">CTO</div></div></div>
+      <div class="agent"><code>cto-engineering</code></div>
+      <div class="chips"><span>architecture</span><span>code-review</span><span>incident-response</span><span>deploy</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">🧭</div><div><div class="role">Product</div><div class="name">CPO</div></div></div>
+      <div class="agent"><code>cpo-product</code></div>
+      <div class="chips"><span>write-spec</span><span>roadmap</span><span>sprint-planning</span><span>metrics</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">🎨</div><div><div class="role">Design</div><div class="name">Head of Design</div></div></div>
+      <div class="agent"><code>head-of-design</code></div>
+      <div class="chips"><span>design-critique</span><span>design-system</span><span>figma</span><span>a11y</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">📣</div><div><div class="role">Marketing</div><div class="name">CMO</div></div></div>
+      <div class="agent"><code>cmo-marketing</code></div>
+      <div class="chips"><span>campaigns</span><span>demand-gen</span><span>reputation</span><span>brand-voice</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">📈</div><div><div class="role">Sales</div><div class="name">CRO</div></div></div>
+      <div class="agent"><code>cro-sales</code></div>
+      <div class="chips"><span>lead-response SLA</span><span>call-prep</span><span>deal-desk</span><span>forecast</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">💰</div><div><div class="role">Finance</div><div class="name">CFO</div></div></div>
+      <div class="agent"><code>cfo-finance</code></div>
+      <div class="chips"><span>statements</span><span>close</span><span>AR &amp; dunning</span><span>variance</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">⚖️</div><div><div class="role">Legal</div><div class="name">CLO</div></div></div>
+      <div class="agent"><code>clo-legal</code></div>
+      <div class="chips"><span>contracts</span><span>privacy &amp; DSR</span><span>lifecycle-register</span><span>compliance</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">👥</div><div><div class="role">People</div><div class="name">CHRO</div></div></div>
+      <div class="agent"><code>chro-people</code></div>
+      <div class="chips"><span>recruiting</span><span>draft-offer</span><span>reviews</span><span>comp</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">🔧</div><div><div class="role">Operations</div><div class="name">COO</div></div></div>
+      <div class="agent"><code>coo-operations</code></div>
+      <div class="chips"><span>status-report</span><span>runbook</span><span>risk</span><span>capacity</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">📊</div><div><div class="role">Data</div><div class="name">Head of Data</div></div></div>
+      <div class="agent"><code>head-of-data</code></div>
+      <div class="chips"><span>analyze</span><span>sql</span><span>KPI tree</span><span>leak-sweep</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">💬</div><div><div class="role">Customer</div><div class="name">Head of Customer</div></div></div>
+      <div class="agent"><code>head-of-customer</code></div>
+      <div class="chips"><span>ticket-triage</span><span>draft-response</span><span>escalation</span><span>kb</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">🤝</div><div><div class="role">Customer Success</div><div class="name">Head of CS</div></div></div>
+      <div class="agent"><code>customer-success</code></div>
+      <div class="chips"><span>health-scores</span><span>renewals</span><span>save-plays</span><span>CSAT/NPS</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">🔀</div><div><div class="role">RevOps</div><div class="name">Head of RevOps</div></div></div>
+      <div class="agent"><code>revops</code></div>
+      <div class="chips"><span>funnel</span><span>attribution</span><span>routing-rules</span><span>CRM hygiene</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">🛡️</div><div><div class="role">Security &amp; GRC</div><div class="name">Head of Security</div></div></div>
+      <div class="agent"><code>security-grc</code></div>
+      <div class="chips"><span>SOC2 readiness</span><span>questionnaires</span><span>access reviews</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">🔎</div><div><div class="role">Knowledge</div><div class="name">Chief Knowledge Officer</div></div></div>
+      <div class="agent"><code>chief-knowledge-officer</code></div>
+      <div class="chips"><span>enterprise-search</span><span>digest</span><span>deep-research</span></div></div>
+
+    <div class="card"><div class="top"><div class="ico">🧪</div><div><div class="role">R&amp;D · Platform</div><div class="name">Builds new capabilities</div></div></div>
+      <div class="agent"><code>rnd-tooling</code></div>
+      <div class="chips"><span>skill-creator</span><span>mcp-builder</span><span>plugins</span></div></div>
+  </div>
+
+  <footer>
+    1 orchestrator + 16 departments = <b style="color:var(--ink);font-weight:650">17 Claude agents</b> · one <code>CLAUDE.md</code> company OS<br>
+    Every request flows <code>you → Chief of Staff → specialist(s) → Chief of Staff → you</code>; results return to the orchestrator, who synthesizes one answer.<br>
+    Every gated action is drafted → <b>human-approved</b> → recorded in the append-only audit log (<code>logs/audit-log.jsonl</code>).<br>
+    <span style="opacity:.8">A dormant Content Studio example (YouTube writer) ships under <code>examples/</code> — copy it into <code>.claude/</code> to activate.</span><br>
+    <span style="opacity:.8">Open a <code>claude</code> session in this folder and just ask.</span>
+  </footer>
+</div>
+</body>
+</html>

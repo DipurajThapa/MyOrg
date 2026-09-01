@@ -1,0 +1,11 @@
+[Unit]
+Description=Run MyOrg verified backup every six hours
+
+[Timer]
+OnCalendar=*-*-* 00/6:15:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+Unit=myorg-backup.service
+
+[Install]
+WantedBy=timers.target

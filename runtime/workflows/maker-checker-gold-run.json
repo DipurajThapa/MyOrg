@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "id": "maker-checker-gold-run",
+  "goal": "Prove typed two-way exchange and independent maker-checker review before external connectors",
+  "max_cycles": 24,
+  "steps": [
+    {"id":"frame-goal","owner":"chief-of-staff","action":"analyze","depends_on":[],"max_attempts":2},
+    {"id":"produce-output","owner":"cto-engineering","checker":"coo-operations","max_review_cycles":2,"action":"internal_write","depends_on":["frame-goal"],"max_attempts":3},
+    {"id":"release-output","owner":"chief-of-staff","action":"publish","depends_on":["produce-output"],"max_attempts":1}
+  ]
+}

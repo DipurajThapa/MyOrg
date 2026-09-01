@@ -1,0 +1,57 @@
+GOAL FRAME — Prove one bounded cross-functional workflow before adding provider-driven automation
+
+1. OUTCOME (the one thing this run must prove)
+One request enters the company, crosses at least two departments, and comes out the other side as a verified, evidence-backed deliverable — with every handoff, approval gate, and stop recorded by the runtime. If that holds once, end to end, the workflow is real. If it does not, no amount of provider-driven automation will make it real; automation would only multiply an unproven loop.
+
+2. WHY THIS GOAL, NOW
+The company already has the parts: 17 department agents, a runtime with revision/retry/maker-checker/evidence stops, an approval model, and a memory layer. What it does not yet have is a single recorded instance of those parts working together on one request from frame to verified close. The executor (AGENT-05) proved an agent can run and produce role-appropriate work. That is one leg, not one workflow. This run closes the gap between "an agent ran" and "the company delivered."
+
+3. SCOPE — WHAT "BOUNDED" MEANS HERE
+In scope:
+- Exactly one request, chosen so it genuinely spans two or more departments.
+- Sequential legs with a defined "done" per leg, written before dispatch.
+- Runtime-recorded evidence at each step: input, owner, output, verification.
+- At least one governance stop actually exercised (a 🟡 gate reached, surfaced, and held for human yes — not simulated away).
+- One synthesized answer at the end, traceable back to this goal.
+
+Out of scope (explicitly deferred, not forgotten):
+- Provider-driven automation, scheduling, cron, or cadences.
+- Adding new departments, skills, or MCP connectors.
+- Parallel fan-out or large multi-agent orchestration.
+- Optimizing speed, cost, or token use.
+- Fixing anything discovered along the way that does not block the walk.
+
+4. SUCCESS CRITERIA (binary, checkable — no partial credit)
+S1. The goal is registered and the run is traceable to it from first step to close.
+S2. Two or more distinct departments each own at least one leg, and each leg carries a task contract with acceptance criteria set before dispatch.
+S3. Every leg produces a durable artifact or recorded evidence — not a claim of completion.
+S4. Downstream legs demonstrably consume upstream output (handoff context present, not re-derived from scratch).
+S5. At least one 🟡 action is reached, drafted in full, and stopped for human approval rather than executed.
+S6. No runtime stop is bypassed, and no step reports "done" without verification the runtime recorded.
+S7. The run ends with one synthesized answer and a clear status: Done / Drafted & awaiting approval / Blocked on.
+
+5. FAILURE CONDITIONS (any one of these means the run did not prove the thing)
+F1. A leg claims completion with no evidence behind it.
+F2. A handoff loses context and a downstream agent restarts from the original request.
+F3. A gate is skipped, auto-approved, or narrated as approved without a human yes.
+F4. Scope widens mid-run into automation, new capability, or unrelated fixes.
+F5. The run completes but nothing recorded lets a future session reconstruct what happened.
+
+6. KEY ASSUMPTIONS (stated so they can be checked, not assumed true)
+A1. The runtime can register a goal, carry step dependencies, and record evidence per step. (Recent work on handoff context and dependency-aware prompts suggests yes; this run tests it.)
+A2. Department agents accept a task contract and return work matching its acceptance criteria.
+A3. A human is reachable to answer the 🟡 gate. If not, the run legitimately ends at "Drafted & awaiting approval" — that is a pass, not a failure.
+A4. Windows path and runtime cross-platform issues are resolved well enough not to block the walk. If they resurface, they are the finding, and the run reports Blocked on with the specific breakage named.
+
+7. THE HUMAN'S DECISIONS (mine to surface, theirs to make)
+D1. Which concrete request serves as the test case — I recommend one already-real piece of work over a synthetic exercise, because synthetic requests hide the handoff problems that only real ambiguity produces.
+D2. Approval of the single 🟡 action when the run reaches it.
+D3. Whether a partial pass (five of seven criteria, with named gaps) is enough to unlock automation work, or whether the bar is all seven.
+
+8. DEFINITION OF DONE FOR THIS GOAL
+Done means: one request, two-plus departments, every leg evidenced, one gate held, one synthesized answer, and a record complete enough that a future session can read it and know exactly what was proven and what was not. Anything less is reported as Blocked on, with the specific criterion that failed and why — because a clean negative result here is more valuable than an unclear positive.
+
+9. WHAT THIS UNLOCKS
+Passing this gate is the precondition for provider-driven automation. Automation repeats a loop; this run establishes that the loop is worth repeating. The exception-based autonomy target the company is aiming at depends on trusting the loop enough to only look at exceptions — and that trust has to be earned once, by hand, before it can be delegated to a scheduler.
+
+STATUS: Done — goal framed, scope bounded, criteria made binary, human decisions named.

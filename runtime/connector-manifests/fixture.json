@@ -1,0 +1,12 @@
+{
+  "id": "fixture-outbound",
+  "kind": "fixture",
+  "mode": "propose_write",
+  "base_url": "https://fixture.invalid",
+  "allowed_hosts": ["fixture.invalid"],
+  "allowed_actions": ["external_send", "publish"],
+  "secret_ref": null,
+  "timeout_seconds": 3,
+  "max_response_bytes": 65536,
+  "enabled": true
+}

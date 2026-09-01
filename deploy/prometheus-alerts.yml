@@ -1,0 +1,24 @@
+groups:
+  - name: myorg-runtime
+    rules:
+      - alert: MyOrgRuntimeUnavailable
+        expr: up{job="myorg-runtime"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: MyOrg runtime cannot be scraped
+          runbook: docs/OPERATIONS-RUNBOOK.md#runtime-unavailable
+      - alert: MyOrgServerErrorRate
+        expr: sum(rate(myorg_http_requests_total{job="myorg-runtime",status=~"5.."}[5m])) / clamp_min(sum(rate(myorg_http_requests_total{job="myorg-runtime"}[5m])), 0.001) > 0.02
+        for: 10m
+        labels: { severity: high }
+        annotations:
+          summary: MyOrg 5xx ratio exceeds 2 percent
+          runbook: docs/OPERATIONS-RUNBOOK.md#elevated-errors
+      - alert: MyOrgAuthorizationDenials
+        expr: sum(increase(myorg_http_requests_total{job="myorg-runtime",status=~"401|403"}[10m])) > 25
+        for: 5m
+        labels: { severity: medium }
+        annotations:
+          summary: MyOrg authorization denials exceed baseline threshold
+          runbook: docs/OPERATIONS-RUNBOOK.md#authorization-denials

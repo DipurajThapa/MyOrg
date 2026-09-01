@@ -1,0 +1,11 @@
+[Unit]
+Description=Run MyOrg maintenance hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+Unit=myorg-maintenance.service
+
+[Install]
+WantedBy=timers.target

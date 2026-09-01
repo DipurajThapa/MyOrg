@@ -1,0 +1,36 @@
+[Unit]
+Description=MyOrg governed runtime API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myorg
+Group=myorg
+WorkingDirectory=/opt/myorg
+EnvironmentFile=/etc/myorg/myorg.env
+ExecStart=/opt/myorg/.venv/bin/python -m runtime.api
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/myorg
+
+[Install]
+WantedBy=multi-user.target
