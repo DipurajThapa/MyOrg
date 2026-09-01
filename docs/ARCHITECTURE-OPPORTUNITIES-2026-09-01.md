@@ -188,26 +188,43 @@ before and after. The existing acceptance grader is the instrument for that.
 **Priority: P1.** Free and safe, so take it — but the measurement demoted it from the P0 it
 was first assigned. The larger cost lever it uncovered is **A-10**.
 
-### A-10 — Keep the cache warm *(new — found by running A-09's measurement)*
+### A-10 — Keep the cache warm *(measured and confirmed — 4.78×)*
 
-**Problem.** A cold dispatch costs **3.4× a warm one**: $1.5155 against $0.5074, and its
-grading pass $1.2516 against $0.2946 **[V]**, §6.1.
+**Confirmed [V].** Six identical calls, `scripts/measure_cache_warmth.py`:
 
-**Why it matters more than A-09.** Trimming context saves 16%. Avoiding a cold start saves
-70% on the calls it affects. Whatever governs cache reuse across `claude -p` invocations is
-worth far more than what is loaded into each one.
+| Call | Cost | cache_create | cache_read |
+|---|---|---|---|
+| 1 | **$1.2007** | 120,059 | 0 |
+| 2–6 | **$0.2514** each | ~20,130 | 99,937 |
 
-**The pleasant part: half of it is already built.** `--supervised` runs one long-lived
-process rather than a cold start per run — that is exactly the shape that keeps a cache warm.
-DEP-07 was justified as *unattended operation*; this measurement suggests it is also the
-single biggest cost optimisation available, which nobody predicted.
+**Ratio 4.78×**, and the spread across calls 2–6 is **$0.0002** — this is a mechanism, not
+noise.
 
-**Validation required.** Measure a supervised sweep driving N runs against N one-shot sweeps,
-and confirm the warm advantage survives across runs rather than only within one. The cache is
-the provider's behaviour, not ours, so this is an empirical claim with an expiry date —
-re-measure before relying on it.
+**The mechanism is not what the first draft assumed, and the correction matters.** Every one
+of those calls was a *separate `claude -p` process*. The cache therefore lives on the
+provider's side, keyed on the prompt prefix, and **survives process exit**. So the lever is
+not "hold one process open" — it is **recency**. Calls close together in time are cheap;
+calls separated by more than the cache's lifetime are not.
 
-**Priority: P1**, and cheap to test because the code exists.
+That reframes the recommendation:
+
+- `--supervised` still helps, but **not because it is one process**. It helps because it
+  keeps dispatches close together instead of scattering them across cold starts.
+- **Batching beats spreading.** A run whose steps execute back to back costs a fraction of
+  the same run spread over hours. This argues for the scheduler's short interval, and against
+  any future design that deliberately paces work out.
+- **Schedule design has a cost dimension nobody has considered.** A daily schedule pays the
+  cold price every day. An hourly one may not. See §6.2 for the measured lifetime.
+- Only the **first** call in a quiet period pays $1.20; that is a fixed daily-ish toll, not a
+  per-run one, which makes it much less alarming than the 4.78× ratio suggests in isolation.
+
+**Expiry date.** Cache behaviour belongs to the provider, not to this product. Re-run
+`scripts/measure_cache_warmth.py` before relying on any of this; the script prints a verdict
+that can say *not supported*, and is written to be able to disprove the claim.
+
+**Priority: P1.** Nothing to build yet — the finding mostly *validates* DEP-07 and informs
+A-01's ceiling (a cold run genuinely costs more, and a ceiling that ignores that will park
+the first run of the day unfairly).
 
 ### A-06 — Executor mutations are replay-safe (WF-13)
 
@@ -376,6 +393,67 @@ was the script's bug — it looked for `PASS` while the grader answers `VERDICT:
 deliverables were fine; the *measurement* was wrong. Worth recording, because it is the same
 failure mode as a green suite that greps for the wrong string.
 
+### 6.2 Cache warmth (A-10) — run 2026-09-02 [V]
+
+`scripts/measure_cache_warmth.py`, six identical calls in immediate succession:
+
+| Call | Cost | cache_create | cache_read |
+|---|---|---|---|
+| 1 | **$1.2007** | 120,059 | 0 |
+| 2 | $0.2513 | 20,126 | 99,937 |
+| 3 | $0.2513 | 20,123 | 99,937 |
+| 4 | $0.2513 | 20,127 | 99,937 |
+| 5 | $0.2515 | 20,140 | 99,937 |
+| 6 | $0.2515 | 20,147 | 99,937 |
+
+**4.78×, with a $0.0002 spread across calls 2–6.** That stability is what makes it a
+mechanism rather than an observation.
+
+**The correction that matters: every call was a separate process.** The cache is
+provider-side and survives process exit, so **the lever is recency, not process lifetime**.
+"Keep one driver alive" was the wrong mental model; "do not let dispatches drift far apart"
+is the right one. `--supervised` still wins, but for the second reason.
+
+### 6.3 How long warmth lasts — and the correction it forced [V]
+
+The paragraph that stood here claimed the cold price was "closer to a daily toll than a
+per-run one". **A follow-up measurement disproved that**, and it is worth keeping the
+correction visible because the wrong version was written with the same confidence.
+
+`measure_cache_warmth.py --calls 3 --gap-seconds 400`:
+
+| Call | Idle before it | Cost | cache_read |
+|---|---|---|---|
+| 1 | — (warm, carried from the previous run) | $0.2518 | 99,937 |
+| 2 | 6.7 min | $0.2523 | 99,937 — **still warm** |
+| 3 | 13.3 min | **$0.6128** | **0 — cold** |
+
+**Warmth expires after something like ten minutes of idleness.** Not a day. The "quiet
+period" is minutes long, so **most runs pay the cold price**, and a schedule firing hourly or
+daily pays it every single time.
+
+Revised consequences:
+
+1. **A-10 is real but narrow.** It applies *within* a burst of work — the steps of one run
+   executing back to back — and essentially never *between* scheduled runs. It is a reason to
+   let a run finish promptly, not a reason to expect cheap schedules.
+2. **`--supervised` gains less than §6.2 first suggested.** It keeps a run's own steps close
+   together, which is worth having, but it will not keep an hourly schedule warm.
+3. **A-01's ceiling must budget for a cold start on nearly every run**, because that is now
+   the normal case rather than the exception. A per-run ceiling of $5 still holds: one cold
+   dispatch plus several warm ones fits inside it.
+4. **Do not build anything for A-10.** The finding's value is that it stops a wrong
+   optimisation — nobody should now go and design a cache-warming keepalive, which would burn
+   money continuously to save money occasionally.
+
+**The harness lied first, again.** The script printed `VERDICT: no meaningful
+across-invocation warmth` for this run, because its rule compared call 1 against the rest —
+valid only when call 1 is cold. Here call 1 was warm from the previous run, so the comparison
+inverted. The script now identifies a cold call by `cache_read == 0`, which is a fact about
+the call rather than an inference from its position. **Second time in this review that a
+measurement harness produced a confident wrong answer** — worth treating as a pattern, not an
+accident.
+
 **A-05.** Prove the current behaviour first: a run at `blocked_cycle_limit`, extended, and
 resumed *without re-running completed steps*. The invariant to protect is that extension
 never re-dispatches finished work.
@@ -409,7 +487,7 @@ validation (§6) has passed.
 | **A-06** | `request_id` from (run, step, attempt) | WF-04 replay protection unreachable on the autonomous path | Probe P6 **[V]** | Closes a double-spend leak | — | Collision across attempts | Crash-and-resweep produces one dispatch | **P1** | Proposed — ready |
 | **A-04** | Run retrospective → memory → planner recall | Run N+1 is exactly as good as run N | `propose_lesson` is the only runtime writer **[V-static]** | Compounding; execution → improvement | Memory recall quality | Teaches the planner to be confidently wrong | Recall precision at 50 entries | **P1** | Proposed — validate recall first |
 | **A-09** | Trim the dispatch context profile | Part of every dispatch pays for the operator's global plugin/skill install, not the work | **Measured on a real dispatch:** $0.5074 → $0.4258 warm, quality 6/6 on every profile **[V]** | ~16% off every dispatch and grading pass, free, no quality cost | — | `--bare` needs `ANTHROPIC_API_KEY`, not OAuth **[V]** | Done — §6.1 | P1 | **Validated; ready to apply** |
-| **A-10** | Keep the cache warm: prefer one long-lived driver to cold starts | A cold dispatch costs 3.4× a warm one | **Measured:** $1.5155 cold vs $0.5074 warm; grading $1.2516 vs $0.2946 **[V]** | Larger than A-09 and already half-built — `--supervised` is a long-lived process | DEP-07 (shipped) | Cache behaviour is the provider's, not ours; may change | Measure a supervised sweep of N runs vs N one-shot sweeps | **P1** | Proposed — new, from the A-09 measurement |
+| **A-10** | ~~Keep the cache warm~~ | A cold call costs 4.78× a warm one | **Measured [V]:** back-to-back calls stay warm ($1.2007 → $0.2514 × 5), but warmth **dies after ~10 min idle** (§6.3) — so most runs pay cold anyway | **Its value is stopping a wrong optimisation.** Nobody should build a cache-warming keepalive: it would burn money continuously to save it occasionally | — | — | Done — §6.2, §6.3 | ~~P1~~ | **Closed — investigated, build nothing** |
 | **A-03** | Non-model validation for one action class | Three checks, one model family | VAL-06 **[V-static]** | Verifies the quality claim | **TOOL-04** | Scope creep into a rules engine | Needs real data to reconcile against | P1 | Blocked |
 | **A-02** | SLA clock and breach event | Runtime has no notion of a deadline | `lead-response` SLA is prose **[V-static]** | Mostly captured by OBS-08 | HOOK-03 | Duplicates OBS-08 alerting | Evidence the alert is insufficient | P2 | Deferred |
 | **A-07** | Document the two approval concepts | `decide_step` vs `decide_approval` are distinct and look alike | `service.py:94,157` **[V-static]** | Prevents a whole class of misuse | — | None | — | P2 | Proposed — docs only |
@@ -423,8 +501,8 @@ validation (§6) has passed.
   [validated ✓] claude -p reports total_cost_usd directly -- no pricing table needed
        │
        ├──► A-09 (trim the profile)  [MEASURED ✓] ~16%, free, no quality cost -- just apply
-       ├──► A-10 (keep the cache warm) [NEW]  3.4x on cold starts; --supervised already does it
-       │        └──► measure a supervised sweep vs N one-shot sweeps
+       ├──► A-10 (cache warmth) [MEASURED, CLOSED] real but ~10 min TTL, so most runs pay
+       │        └──► build nothing; it only informs A-01's ceiling
        │
        ├──► A-06 (replay-safe ids)         cheap, independent
        │        │
