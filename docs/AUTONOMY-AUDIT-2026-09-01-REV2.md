@@ -666,7 +666,7 @@ re-driving a terminal run should report that it is terminal rather than returnin
 
 | ID | Deliverable | Status | Why | Pri | Evidence |
 |---|---|---|---|---|---|
-| VAL-07 | Quality gates fail closed | ⛔ | A grader outage silently accepts ungraded work | **P0** | Probe P4 |
+| VAL-07 | Quality gates fail closed | ✅ | `acceptance_failure` retries a stalled grader 3× with backoff, then raises. Driver and agent API both keep the deliverable, park the step at `awaiting_approval` with the reason recorded, and write the audit line. Approving finishes the step with the work already produced — the agent is never asked for it twice. The console states why it is parked | ~~P0~~ done | 11 tests, `tests/test_grading.py` + `module-grading.sh` |
 | REC-10 | Step ownership enforced by a fencing token | ⛔ | Two drivers complete the same step; external work is discarded | **P0** | Probe P5 |
 | REC-11 | Cycle-budget exhaustion is resumable and loud | ⛔ | Terminal, strands work, re-drive is a silent no-op | P1 | Probe P3 |
 | WF-13 | Executor mutations are replay-safe | ⛔ | A uuid per call makes WF-04 unreachable | P1 | Probe P6 |

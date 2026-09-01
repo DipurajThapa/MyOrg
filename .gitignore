@@ -18,3 +18,5 @@ runtime/runs/*.brief
 runtime/runs/_outbox.jsonl
 runtime/runs/_leases.json
 logs/*.lock
+apichk-*/
+tmp*/
