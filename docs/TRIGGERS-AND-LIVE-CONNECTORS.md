@@ -182,13 +182,44 @@ Every attempt and every settlement writes a hash-chained line to `logs/audit-log
 
 ---
 
-## 5. Checking it works
+## 5. Watching it
+
+`/metrics` carries both halves of the company: the web boundary, and the part that runs while
+nobody is looking. It needs `MYORG_METRICS_TOKEN`; without it the route answers 404 rather
+than admitting it exists.
+
+| Series | Read it as |
+|---|---|
+| `myorg_runs{state=...}` | running · waiting_on_you · stalled · finished · failed |
+| `myorg_approvals_waiting` / `myorg_approval_wait_seconds_max` | how many people are being waited on, and for how long — **oldest**, not newest |
+| `myorg_trigger_queue_depth` / `..._oldest_seconds` | is work arriving faster than it is planned |
+| `myorg_connector_receipts_in_flight` / `..._unsettled_seconds_max` | calls that left and never came back |
+| `myorg_notices_outstanding{severity=...}` | what the outbox is holding for a person |
+| `myorg_runtime_snapshot_ok` | **0 means the four rows above are lying** — the collector could not read its own state |
+
+That last row is the one to alert on first. A collector that fails quietly goes silent for
+exactly the same reason a healthy company does.
+
+**The API reports the scheduler's numbers, not its own.** They are separate processes, but
+both read the same run log and the same store, so a scrape of the API tells you what the
+scheduler has been doing — including when the scheduler has stopped, which is what a rising
+`myorg_trigger_queue_depth` with no runs starting actually means. You do not need to scrape
+the scheduler; you do need both installed.
+
+No label carries a run id, a goal, an agent or an organization: metric labels end up in
+dashboards and alert emails, so nothing business-shaped is allowed into them.
+
+Alert rules for all of it: `deploy/prometheus-alerts.yml`, group `myorg-autonomy`. Each names
+a section of [OPERATIONS-RUNBOOK.md](OPERATIONS-RUNBOOK.md).
+
+## 6. Checking it works
 
 ```bash
 python -m runtime.scheduler --once --backend stub      # a dry sweep, no tokens
 python -m runtime.audit verify                         # the chain is intact
 curl -H "Authorization: Bearer $TOKEN" "$API/v1/schedules"
 curl -H "Authorization: Bearer $TOKEN" "$API/v1/connectors/in-flight"
+curl -H "Authorization: Bearer $METRICS_TOKEN" "$API/metrics" | grep myorg_runs
 ```
 
 Tests that pin the behaviour above: `tests/test_triggers.py`, `tests/test_trigger_admin.py`,

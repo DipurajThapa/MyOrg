@@ -653,6 +653,27 @@ class Store:
             return dict(connection.execute("SELECT * FROM connector_receipts WHERE org_id=? AND id=?",
                                            (org_id, receipt_id)).fetchone())
 
+    # --- aggregates for the metrics endpoint ---------------------------------------
+    # Deliberately not org-scoped and deliberately not labelled by org: these are scraped
+    # every few seconds, and an unbounded label is how a metrics endpoint becomes the
+    # thing that falls over. Per-organization detail belongs in the operator API.
+
+    def trigger_queue_summary(self) -> tuple[int, str | None]:
+        """How much triggered work is waiting, and how long the oldest has waited."""
+        with self.reading() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS depth, MIN(created_at) AS oldest FROM trigger_intake "
+                "WHERE status='queued'").fetchone()
+            return int(row["depth"]), row["oldest"]
+
+    def in_flight_receipt_summary(self) -> tuple[int, str | None]:
+        """Calls that left this host and were never resolved, and the age of the oldest."""
+        with self.reading() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count, MIN(created_at) AS oldest FROM connector_receipts "
+                "WHERE status='in_flight'").fetchone()
+            return int(row["count"]), row["oldest"]
+
     def in_flight_connector_receipts(self, org_id: str) -> list[dict]:
         """Calls that left this host and were never resolved. Nothing may retry these."""
         with self.reading() as connection:

@@ -21,7 +21,7 @@ from runtime.auth import AuthError, TokenService, bearer_token
 from runtime.connectors import ConnectorError
 from runtime.db import Conflict, NotFound, Store, StoreError
 from runtime.gateway_auth import GatewayAuthenticator
-from runtime.observability import JsonFormatter, Metrics
+from runtime.observability import JsonFormatter, Metrics, RuntimeGauges
 from runtime.service import Forbidden, MyOrgService, ServiceError
 from runtime.triggers import TriggerError
 
@@ -66,6 +66,7 @@ class MyOrgHTTPServer(ThreadingHTTPServer):
         self.rate_limiter = RateLimiter()
         self.gateway = gateway
         self.metrics = Metrics()
+        self.runtime_gauges = RuntimeGauges(store)
         self.metrics_token = metrics_token
 
 
@@ -248,7 +249,10 @@ class MyOrgHandler(BaseHTTPRequestHandler):
                 expected = f"Bearer {self.server.metrics_token}" if self.server.metrics_token else ""
                 if not expected or not hmac.compare_digest(supplied, expected):
                     raise RouteNotFound()
-                self._send_text(HTTPStatus.OK, self.server.metrics.render(),
+                # Both halves in one scrape: the web boundary, and the company running
+                # itself. Reporting only the first is what OBS-08 was about.
+                self._send_text(HTTPStatus.OK,
+                                self.server.metrics.render() + self.server.runtime_gauges.render(),
                                 "text/plain; version=0.0.4; charset=utf-8")
                 return
             # The one route with no bearer token: an outside system cannot hold one. It

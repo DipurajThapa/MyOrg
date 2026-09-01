@@ -22,3 +22,60 @@ groups:
         annotations:
           summary: MyOrg authorization denials exceed baseline threshold
           runbook: docs/OPERATIONS-RUNBOOK.md#authorization-denials
+
+  # The autonomous half. Everything above watches the web server -- the one part of this
+  # company that is not autonomous. These four watch the part that is, which is the part
+  # that runs while nobody is looking.
+  - name: myorg-autonomy
+    rules:
+      - alert: MyOrgOutwardCallUnresolved
+        # The most serious of the four. A call left this host and never came back, so
+        # nobody knows whether it took effect. The runtime will not retry it -- by design --
+        # so it waits for a person, and if no person comes it waits forever.
+        expr: myorg_connector_receipt_unsettled_seconds_max{job="myorg-runtime"} > 900
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: An outward call has been unresolved for over 15 minutes
+          description: Reconcile it against the provider, then POST /v1/connector-receipts/{id}/reconciliation.
+          runbook: docs/TRIGGERS-AND-LIVE-CONNECTORS.md#the-three-outcomes
+
+      - alert: MyOrgApprovalUnanswered
+        # Work has stopped and is waiting on a person. Silence here is indistinguishable
+        # from "nothing to do" without this alert.
+        expr: myorg_approval_wait_seconds_max{job="myorg-runtime"} > 14400
+        for: 15m
+        labels: { severity: high }
+        annotations:
+          summary: A decision has been waiting on a human for over 4 hours
+          runbook: docs/OPERATIONS-RUNBOOK.md#approvals-waiting
+
+      - alert: MyOrgTriggerQueueBacklog
+        # Work is arriving faster than it is being planned. At 50 the queue refuses new
+        # work, so this fires well before anything is dropped.
+        expr: myorg_trigger_queue_depth{job="myorg-runtime"} > 20
+        for: 10m
+        labels: { severity: high }
+        annotations:
+          summary: Triggered work is queueing faster than the scheduler plans it
+          description: Check the scheduler is running -- systemctl status myorg-scheduler.
+          runbook: docs/TRIGGERS-AND-LIVE-CONNECTORS.md#running-the-loop-as-a-service
+
+      - alert: MyOrgRunsStalled
+        expr: myorg_runs{job="myorg-runtime",state="stalled"} > 0
+        for: 30m
+        labels: { severity: medium }
+        annotations:
+          summary: A run can no longer move and is not waiting on anybody
+          runbook: docs/OPERATIONS-RUNBOOK.md#stalled-runs
+
+      - alert: MyOrgAutonomyMetricsBlind
+        # The watchers stopped watching. Without this, every alert above would go quiet
+        # for the same reason a healthy company does -- which is the failure mode this
+        # whole group exists to prevent.
+        expr: myorg_runtime_snapshot_ok{job="myorg-runtime"} == 0
+        for: 10m
+        labels: { severity: high }
+        annotations:
+          summary: MyOrg cannot read its own autonomous state; the alerts above are blind
+          runbook: docs/OPERATIONS-RUNBOOK.md#runtime-unavailable

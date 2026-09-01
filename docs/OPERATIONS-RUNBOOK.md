@@ -78,6 +78,46 @@ organization through offline administration, preserve logs, rotate gateway/issue
 the approved manager if compromise is plausible, and have Security review identity bindings and
 role grants. Never reveal whether an ID exists across tenants.
 
+## Approvals waiting
+
+`MyOrgApprovalUnanswered` means a run has stopped and is waiting on a person — for over four
+hours. This is not an error; it is the governance model working, and the alert exists because
+"stopped, waiting for you" and "nothing to do" look identical from outside.
+
+See the queue with `GET /v1/decisions` or the Control Center, and answer it there. If the
+queue is long because nobody is on duty, that is a staffing decision, not a runtime one:
+pause the schedules feeding it (`PUT /v1/schedules/{id}/status`, `{"enabled": false}`) rather
+than letting work pile up against an absent approver. Never widen the green band to clear a
+backlog — the gate classification is in `runtime/policy.json` and changing it changes what
+the company may do unattended, forever.
+
+## Stalled runs
+
+`MyOrgRunsStalled` is the dangerous quiet: a run that can no longer move and is *not* waiting
+on anybody. Nobody has been asked for anything, so nobody will notice.
+
+`python -m runtime.health` names them and says why. The usual causes are a step held by a
+worker that died (reclaim with `expire-claim`), a dependency that never completed, or an
+exhausted cycle budget (`blocked_cycle_limit` — terminal today, REC-11). Check the scheduler
+is alive first: `systemctl status myorg-scheduler`, or `Get-ScheduledTask MyOrgScheduler`.
+
+## Trigger queue backlog
+
+`MyOrgTriggerQueueBacklog` means work is arriving faster than it is being planned. The queue
+refuses new work at 50, so this fires with room to spare.
+
+Almost always the scheduler has stopped — check it is running before anything else. If it is
+running and still behind, a provider is retrying in a loop: find the source with
+`GET /v1/schedules` and the `trigger_intake.source_ref` column, and pause that trigger.
+Planning costs money, so a backlog left alone is a bill, not just a delay.
+
+## Autonomy metrics blind
+
+`MyOrgAutonomyMetricsBlind` (`myorg_runtime_snapshot_ok 0`) means the runtime cannot read its
+own state. **Treat every other autonomy alert as unreliable until this clears** — they would
+all go quiet for the same reason a healthy company does. `myorg_runtime_snapshot_errors_total`
+counts the failures; the API log names the source that raised.
+
 ## Backup, restore, and reconciliation
 
 The six-hour timer creates a SQLite online backup, checksum manifest, and integrity/hash-chain

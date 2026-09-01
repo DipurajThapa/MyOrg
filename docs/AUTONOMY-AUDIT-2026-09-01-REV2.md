@@ -345,7 +345,7 @@ marked **(new)**.
 | ~~4~~ | ~~The loop is not a supervised service~~ | LOOP-03, DEP-07 | **CLOSED 2026-09-01 (cycle 2).** An idle pass is the normal state of a service; SIGTERM finishes the pass in flight; a second loop is refused | Unattended operation; stall alerting |
 | ~~5~~ | ~~No version control~~ | VCS-01 | **CLOSED.** 11 commits on `main` | CI — though no remote is configured yet (VCS-03) |
 | ~~6~~ | ~~Suite is red while the tracker says green~~ | TEST-01, SKILL-04, DOC-07 | **CLOSED.** `SUITE: PASS`, exit 0 | Trustworthy "done" |
-| 7 | Nothing observes the autonomous half | OBS-08 | The company now acts unattended, and the only instrumented component is the web server. A stalled queue, runaway spend, or an unanswered approval is invisible until a person looks. | Every guarantee above becoming one somebody would notice failing |
+| ~~7~~ | ~~Nothing observes the autonomous half~~ | OBS-08 | **CLOSED 2026-09-01 (cycle 2).** Runs, approval age, queue depth and unresolved outward calls are exported and alerted — and the collector reports its own blindness | Every guarantee above is now one somebody would notice failing |
 | 8 | Standing autonomy is `curl`-only | UI-02 | Triggers and schedules can be created and paused only through the API. For a product whose safety story is human oversight, the newest and least reversible controls are missing from the oversight surface. | Operator confidence; safe day-to-day use |
 
 ### P1 — Major capability gaps
@@ -898,17 +898,31 @@ connectors · triggers) and lift the `api.py` route chain into a table-driven di
 
 ### 18.2 Probable risks (reasoned from evidence, not reproduced)
 
-**OBS-08 (new) — nothing observes the autonomous half.**
-`observability.py` exports four HTTP series and `prometheus-alerts.yml` holds three rules,
-all HTTP [V-static]. There is no metric for runs started, steps dispatched, model spend,
-approval age, trigger queue depth, or in-flight receipts. The company can now run
-unattended, and the only thing being watched is the web server.
-*Impact:* a stalled queue, runaway spend, or an approval nobody answered are all invisible
-until a person happens to look. *Fix:* export the numbers the runtime already computes
-(`health.all_health()`, `queued_triggers`, `in_flight_connector_receipts`) and add three
-alerts — queue depth, oldest unanswered approval, unsettled receipt age. *Verify:* scrape
-`/metrics` after a sweep and assert the series exist. **P1. Depends on: nothing.**
-This is the largest remaining gap.
+**OBS-08 (new) — nothing observed the autonomous half. FIXED.**
+`observability.py` exported four HTTP series and `prometheus-alerts.yml` held three rules,
+all HTTP [V-static]. There was no metric for runs, approval age, trigger queue depth, or
+in-flight receipts. The company had just been given the ability to run unattended, and the
+only instrumented component was the one part of it that is *not* autonomous.
+*Impact:* a stalled queue, an unanswered approval, or an outward call that left and never
+came back were invisible until a person happened to look.
+*Fix:* `RuntimeGauges` in `runtime/observability.py`, served on the same token-protected
+`/metrics` scrape. Details that matter more than the series list:
+  - **Every series is always exported, including at zero.** A gauge that disappears when
+    it is zero cannot be alerted on.
+  - **Ages report the oldest, never the newest** — reporting the newest would hide exactly
+    the decision that has been ignored.
+  - **A failing collector is itself a metric.** `myorg_runtime_snapshot_ok 0` is alertable,
+    because a collector that failed quietly would recreate this very gap: every alert would
+    go silent for the same reason a healthy company does.
+  - **One source failing costs its own numbers, not the endpoint.**
+  - **Cached for one scrape interval.** Collecting reads every run log; a metrics endpoint
+    that slows down as the company gets busier is one people switch off.
+  - **No label carries a run id, a goal, an agent or an org.** Labels leak into dashboards
+    and alert emails; a test asserts the scrape contains none of them.
+*Verify:* `tests/test_runtime_metrics.py` — 36 checks, each creating the real condition and
+asserting the number moved. Five alert rules in `deploy/prometheus-alerts.yml`, with a test
+that every rule reads a series the runtime actually exports and names a runbook that exists.
+**P1 — done.**
 
 **UI-02 (new) — standing autonomy can only be created or stopped with `curl`.**
 Triggers, schedules, in-flight receipts and connector authorization are API-only; the
@@ -970,7 +984,7 @@ behind) · TOOL-03 · TOOL-07 · HOOK-02 · HOOK-03 · DEP-06 · DEP-07 · LOOP-
 | TEST-07 | A test can never write to production state | ✅ | Ten fabricated runs were found in the company's real read model | ~~P0~~ done | `test_a_sweep_never_mirrors_into_the_companys_real_database` |
 | SEC-08 | Trigger intake has backpressure | ✅ | A valid signature was an unbounded model bill | ~~P1~~ done | 4 `BackpressureTest` checks |
 | OPS-01 | One supervised loop per runs directory | ✅ | Two loops would plan and pay twice | ~~P1~~ done | 3 `single_instance` checks |
-| OBS-08 | Metrics and alerts for the autonomous half | ⛔ | Only the web server is watched, and the company now runs unattended | **P1** | `observability.py` = 4 HTTP series |
+| OBS-08 | Metrics and alerts for the autonomous half | ✅ | Only the web server was watched, and the company now runs unattended | ~~P1~~ done | `tests/test_runtime_metrics.py` 36/36; 5 alert rules |
 | UI-02 | Operator surface for triggers, schedules and exceptions | ⛔ | Standing autonomy is `curl`-only | **P1** | Control Center shows decisions only |
 | TOOL-09 | Connector authorization renewal and expiry warning | ⛔ | Access dies at a moment nobody chose | P1 | `_admit` refuses expired |
 | VCS-03 | A git remote, so CI actually runs | ⛔ | CI has never executed | P1 | no remote configured |
@@ -987,11 +1001,28 @@ behind) · TOOL-03 · TOOL-07 · HOOK-02 · HOOK-03 · DEP-06 · DEP-07 · LOOP-
 
 ## 20. Next highest-priority issue
 
-**OBS-08 — instrument the autonomous half.** Everything this cycle added lets the company
-act without a person present. Nothing this cycle added lets a person see it doing so, and
-the telemetry that does exist watches the one component that is *not* autonomous. Until
-queue depth, approval age, spend and unsettled receipts are exported and alerted, every
-guarantee above is one nobody would find out had failed.
+~~**OBS-08 — instrument the autonomous half.**~~ **DONE, same session** — see §18.2. The
+company now reports its own runs, approval ages, queue depth and unresolved outward calls,
+and says so when it cannot.
 
-It is also small: the runtime already computes all four numbers, so this is an exporter and
-three alert rules, not a new subsystem.
+**Next: UI-02 — the operator surface for standing autonomy.**
+
+Triggers and schedules are standing permission to act unattended, and today they can only be
+created, listed and paused with `curl`. The Control Center shows the decision queue and
+nothing else. For a product whose entire safety story is human oversight, the controls that
+are newest, least reversible and hardest to notice going wrong are the ones missing from the
+surface an operator actually uses.
+
+Two screens, both reading routes that already exist:
+- **Triggers** — schedules and webhook triggers, with pause and resume (`GET /v1/schedules`,
+  `PUT /v1/schedules/{id}/status`, `POST /v1/triggers/webhook`).
+- **Exceptions** — unresolved outward calls and failed triggers
+  (`GET /v1/connectors/in-flight`), each with the reconcile action.
+
+The stop button matters more than the start button. A person who cannot pause a schedule
+from the screen in front of them will not be able to stop the company at the moment they
+most want to.
+
+After that, in order: **VCS-03** (a remote, so CI has ever run) · **TOOL-09** (authorizations
+expire silently) · **HITL-06** (CLI approvals are still unauthenticated) · **TOOL-04**, which
+remains the binding constraint on usefulness and needs a human, not a session.
