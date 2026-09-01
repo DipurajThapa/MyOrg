@@ -34,6 +34,7 @@ outside this release candidate.
 | duplicate execution after retry | duplicate send/publish | request idempotency plus unique connector receipt; approval and receipt commit atomically | provider idempotency semantics — Connector owner |
 | operator restores wrong/corrupt backup | data loss | manifest checksum, DB/hash verification, exact target confirmation, pre-restore copy | monitored production rehearsal and RPO/RTO approval — Operations |
 | sensitive payload placed in logs | privacy breach | API only accepts public/internal run metadata; connector flow uses bounded references/hashes | DLP/log review and retention decision — Privacy owner |
+| **dispatched step inherits the operator's own connectors** | a department reads the operator's mail, calendar or drive — data the company never granted it, through tools `tools.json` does not govern | `--strict-mcp-config` on every dispatch (`backends.py: DISPATCH_PROFILE`); the repository ships no `.mcp.json`, so a dispatch now loads none. Pinned by three tests, including for ungranted calls | found 2026-09-02 while measuring cost, not while reviewing security — the same check should be repeated for any future flag that widens a dispatch's environment — Security |
 
 ## External threats
 

@@ -12,6 +12,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STEP_TIMEOUT_SECONDS = 300
 
+# A dispatched department gets the company's context, not the operator's laptop.
+#
+# `--strict-mcp-config` is the one that matters, and it is containment rather than economy.
+# This repository ships no `.mcp.json`, so the only MCP servers a dispatch would inherit are
+# whatever the person running it happens to have connected -- their mail, their calendar,
+# their drive. A finance step reasoning about a budget has no business being handed somebody's
+# inbox, and `tools.json` cannot take it away because MCP tools arrive outside that grant.
+#
+# `--disable-slash-commands` costs nothing to set: no grant in `tools.json` includes `Skill`,
+# so a dispatched step already cannot invoke one. This stops paying to load what it may not
+# use. Measured together at ~16% of each dispatch, with no change in output quality
+# (docs/ARCHITECTURE-OPPORTUNITIES-2026-09-01.md §6.1).
+DISPATCH_PROFILE = ("--strict-mcp-config", "--disable-slash-commands")
+
 
 class ExecutorError(RuntimeError):
     """The driver could not make progress for a reason the runtime cannot record."""
@@ -60,7 +74,7 @@ class ClaudeCliBackend:
         grant = getattr(request, "grant", None)
         command = ["claude", "-p", request.prompt(), "--output-format", "text",
                    "--append-system-prompt", request.brief,
-                   "--permission-mode", "dontAsk"]
+                   "--permission-mode", "dontAsk", *DISPATCH_PROFILE]
         if grant and room:
             command += ["--tools", ",".join(grant.tools), "--allowedTools", *grant.allow]
         else:

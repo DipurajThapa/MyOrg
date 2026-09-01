@@ -193,6 +193,30 @@ class BackendFlagsTest(unittest.TestCase):
         self.assertEqual(command[command.index("--tools") + 1], "")
         self.assertEqual(command[command.index("--allowedTools") + 1], "")
 
+    # --- the dispatch profile (A-09) --------------------------------------------------
+
+    def test_a_dispatch_never_inherits_the_operators_own_connectors(self) -> None:
+        """Containment, not economy. This repository ships no `.mcp.json`, so without this
+        flag the only MCP servers a dispatch loads are whatever the person running it has
+        connected -- their mail, their calendar, their drive. `tools.json` cannot take those
+        away, because MCP tools arrive outside the grant it controls."""
+        for captured in (self.build(), self.build(workspace=tools.workspace("run-profile", "step-one"),
+                                                  grant=tools.grant_for("cfo-finance"))):
+            self.assertIn("--strict-mcp-config", captured["command"])
+
+    def test_a_dispatch_does_not_pay_to_load_skills_it_cannot_invoke(self) -> None:
+        """No grant includes `Skill`, so a dispatched step cannot run one. Loading them is
+        cost with no capability behind it."""
+        self.assertNotIn("Skill", tools.grant_for("cfo-finance").tools)
+        self.assertIn("--disable-slash-commands", self.build()["command"])
+
+    def test_the_profile_applies_to_ungranted_calls_too(self) -> None:
+        """Grading and briefing get no tools, but they are still dispatches and still
+        inherit whatever the operator has connected unless this is set."""
+        command = self.build()["command"]
+        for flag in ("--strict-mcp-config", "--disable-slash-commands"):
+            self.assertIn(flag, command)
+
     def setUp(self) -> None:
         import importlib
         import os

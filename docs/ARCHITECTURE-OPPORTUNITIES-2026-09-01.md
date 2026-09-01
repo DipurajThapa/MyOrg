@@ -185,8 +185,24 @@ it was reaching for, a global instruction that shaped its output. The mitigation
 measurement, not confidence: compare a real dispatch's *output quality*, not just its cost,
 before and after. The existing acceptance grader is the instrument for that.
 
-**Priority: P1.** Free and safe, so take it — but the measurement demoted it from the P0 it
-was first assigned. The larger cost lever it uncovered is **A-10**.
+**Priority: P1. Applied** — `DISPATCH_PROFILE` in `runtime/backends.py`.
+
+**What applying it revealed, which was not the point of the exercise.** Checking the two
+flags were *safe* turned up that one of them is a **containment fix**, and the ~16% is the
+side effect:
+
+- **`--strict-mcp-config`.** This repository ships no `.mcp.json`, so the only MCP servers a
+  dispatch loaded were whatever the operator happens to have connected — on this machine,
+  mail, calendar and drive. A `cfo-finance` step reasoning about a budget was being handed
+  somebody's inbox, and **`tools.json` could not take it away**, because MCP tools arrive
+  outside the grant it governs. AGENT-06 scoped file access carefully and had a hole beside
+  it the whole time.
+- **`--disable-slash-commands`.** No grant in `tools.json` includes `Skill`, so a dispatched
+  step already could not invoke one. Loading them was cost with no capability behind it.
+
+Pinned by three tests in `tests/test_tools.py`, including that the profile applies to
+*ungranted* calls too — grading and briefing get no tools but are still dispatches, and would
+otherwise still have inherited the operator's connectors.
 
 ### A-10 — Keep the cache warm *(measured and confirmed — 4.78×)*
 
@@ -486,7 +502,7 @@ validation (§6) has passed.
 | **A-05** | Budget extension, generic over cycles and cost | `blocked_cycle_limit` is terminal, strands work, silent re-drive | Probe P3 **[V]** | Removes a dead end; prevents A-01 duplicating it | — | Two budgets, one vocabulary | Extension must not re-dispatch finished steps | **P1** | Proposed — design with A-01 |
 | **A-06** | `request_id` from (run, step, attempt) | WF-04 replay protection unreachable on the autonomous path | Probe P6 **[V]** | Closes a double-spend leak | — | Collision across attempts | Crash-and-resweep produces one dispatch | **P1** | Proposed — ready |
 | **A-04** | Run retrospective → memory → planner recall | Run N+1 is exactly as good as run N | `propose_lesson` is the only runtime writer **[V-static]** | Compounding; execution → improvement | Memory recall quality | Teaches the planner to be confidently wrong | Recall precision at 50 entries | **P1** | Proposed — validate recall first |
-| **A-09** | Trim the dispatch context profile | Part of every dispatch pays for the operator's global plugin/skill install, not the work | **Measured on a real dispatch:** $0.5074 → $0.4258 warm, quality 6/6 on every profile **[V]** | ~16% off every dispatch and grading pass, free, no quality cost | — | `--bare` needs `ANTHROPIC_API_KEY`, not OAuth **[V]** | Done — §6.1 | P1 | **Validated; ready to apply** |
+| **A-09** | Trim the dispatch context profile | A dispatch inherited the operator's own MCP connectors, and paid to load skills no grant lets it invoke | **Measured:** $0.5074 → $0.4258 warm, quality 6/6 **[V]**. `Skill` is in no grant; the repo ships no `.mcp.json` | ~16% off every dispatch — but the real win is **containment**: a finance step no longer inherits somebody's inbox | — | — | Done — §6.1; 3 tests in `test_tools.py` | ~~P1~~ | **✅ Applied** — `DISPATCH_PROFILE` in `backends.py` |
 | **A-10** | ~~Keep the cache warm~~ | A cold call costs 4.78× a warm one | **Measured [V]:** back-to-back calls stay warm ($1.2007 → $0.2514 × 5), but warmth **dies after ~10 min idle** (§6.3) — so most runs pay cold anyway | **Its value is stopping a wrong optimisation.** Nobody should build a cache-warming keepalive: it would burn money continuously to save it occasionally | — | — | Done — §6.2, §6.3 | ~~P1~~ | **Closed — investigated, build nothing** |
 | **A-03** | Non-model validation for one action class | Three checks, one model family | VAL-06 **[V-static]** | Verifies the quality claim | **TOOL-04** | Scope creep into a rules engine | Needs real data to reconcile against | P1 | Blocked |
 | **A-02** | SLA clock and breach event | Runtime has no notion of a deadline | `lead-response` SLA is prose **[V-static]** | Mostly captured by OBS-08 | HOOK-03 | Duplicates OBS-08 alerting | Evidence the alert is insufficient | P2 | Deferred |
