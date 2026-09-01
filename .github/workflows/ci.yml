@@ -38,6 +38,39 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # The platform this is developed on, and until now the one CI never checked. That is the
+  # wrong way round: `filelock.py` carries a whole `msvcrt` branch, the runs directory is
+  # walked with Windows path semantics, and every local green suite came from here. Only the
+  # acceptance suite runs — release evidence and the SBOM are built once, on Linux, because
+  # they describe the artifact rather than the host.
+  runtime-windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The suite calls `python3`. On Windows that name is not guaranteed to exist, and where
+      # it does it can point at a different interpreter than `python` -- on the development
+      # host it resolves to 3.13 while `python` is 3.12. A shim removes the ambiguity, so the
+      # suite provably runs on the version this job pinned.
+      - name: Point python3 at the interpreter under test
+        run: |
+          mkdir -p "$HOME/bin"
+          printf '#!/usr/bin/env bash\nexec python "$@"\n' > "$HOME/bin/python3"
+          chmod +x "$HOME/bin/python3"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: Confirm the interpreter
+        run: python3 --version
+      - name: Compile runtime
+        run: python -m compileall -q runtime scripts tests
+      - name: Run the acceptance suite on Windows
+        run: bash tests/run.sh
+
   codeql:
     permissions:
       security-events: write
