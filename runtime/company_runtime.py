@@ -15,12 +15,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))  # importable both as `runtime.company_runtime` and as a script
 from runtime.filelock import exclusive_lock  # noqa: E402
+from runtime import audit as audit_log  # noqa: E402
 
 RUNS = Path(os.environ.get("MYORG_RUNS_DIR", ROOT / "runtime" / "runs"))
 POLICY_PATH = ROOT / "runtime" / "policy.json"
 DEFAULT_ORG = os.environ.get("MYORG_ORG_ID", "default")
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 TERMINAL = {"completed", "rejected", "blocked_human", "blocked_retry_limit"}
+TERMINAL_RUN = TERMINAL | {"blocked_cycle_limit", "blocked_review_limit"}
 MESSAGE_KINDS = {"handoff", "question", "answer", "feedback", "decision"}
 CLASSIFICATIONS = {"public", "internal", "confidential"}
 
@@ -149,7 +151,25 @@ def append_event(run_id: str, state: dict) -> None:
         handle.flush(); os.fsync(handle.fileno())
 
 
-def mutate(run_id: str, request_id: str, event: str, actor: str, target: str, change) -> dict:
+def audit_evidence(run_id: str) -> str:
+    """The run's own log is the evidence for anything the runtime records about it."""
+    path = run_path(run_id)
+    try: return str(path.relative_to(ROOT)).replace("\\","/")
+    except ValueError: return str(path)
+
+
+def record_terminal(run_id: str, state: dict) -> None:
+    audit_log.append(actor="runtime", action=f"run.{state['run_status']}", category="green",
+                     target=run_id, approval="not-required", evidence=audit_evidence(run_id),
+                     outcome="blocked" if state["run_status"] != "completed" else "ok",
+                     note=f"the run reached {state['run_status']} and can go no further")
+
+
+def mutate(run_id: str, request_id: str, event: str, actor: str, target: str, change, audit=None) -> dict:
+    """`audit` returns the entry a gated transition must leave behind, or None.
+
+    The entry is written *before* the run event, so a log the runtime cannot write stops
+    the transition instead of letting an ungoverned action through unrecorded."""
     with run_lock(run_id):
         events = read_events(run_id)
         prior=next((item for item in events if item["request_id"] == request_id),None)
@@ -160,10 +180,15 @@ def mutate(run_id: str, request_id: str, event: str, actor: str, target: str, ch
         if state["run_status"] != "active": raise SystemExit(f"run is terminal: {state['run_status']}")
         if state["cycle_count"] >= state["max_cycles"]:
             state.update(seq=state["seq"]+1, event="run.blocked_cycle_limit", actor="runtime", target=run_id, request_id=request_id, ts=now(), run_status="blocked_cycle_limit")
+            record_terminal(run_id, state)
             append_event(run_id, state)
             raise SystemExit("run reached max_cycles")
+        was = state["run_status"]
         change(state)
         state.update(seq=state["seq"]+1, event=event, actor=actor, target=target, request_id=request_id, ts=now(), cycle_count=state["cycle_count"]+1)
+        entry = audit(state) if audit else None
+        if entry: audit_log.append(evidence=audit_evidence(run_id), **entry)
+        if state["run_status"] != was and state["run_status"] in TERMINAL_RUN: record_terminal(run_id, state)
         append_event(run_id, state)
         return state
 
@@ -194,7 +219,17 @@ def request_step(args) -> None:
         if step["risk"] == "red": step["status"] = "blocked_human"; state["run_status"]="blocked_human"
         elif step["risk"] == "yellow": step["status"] = "awaiting_approval"
         else: step["status"] = "in_progress"; step["attempts"] += 1
-    state = mutate(args.run_id,args.request_id,"step.requested",args.actor,args.step,change)
+    def audit(state):
+        step = state["steps"][args.step]
+        if step["risk"] == "green": return None  # ordinary work is not a gated action
+        gated = step["risk"] == "yellow"
+        return {"actor": args.actor, "action": step["action"], "category": step["risk"],
+                "target": f"{args.run_id}/{args.step}",
+                "approval": "pending" if gated else "not-required",
+                "outcome": "awaiting-approval" if gated else "refused",
+                "note": "parked for a human decision" if gated
+                        else "handed back to a human; no code path can approve this"}
+    state = mutate(args.run_id,args.request_id,"step.requested",args.actor,args.step,change,audit)
     print(state["steps"][args.step]["status"])
 
 
@@ -204,7 +239,12 @@ def approve(args) -> None:
         if not step or step["status"] != "awaiting_approval": raise SystemExit(f"step is not awaiting approval: {args.step}")
         if not args.approval_ref.strip(): raise SystemExit("approval_ref is required")
         step.update(status="in_progress", attempts=step["attempts"]+1, approver=args.approver, approval_ref=args.approval_ref)
-    mutate(args.run_id,args.request_id,"step.approved",args.approver,args.step,change); print("in_progress")
+    def audit(state):
+        step = state["steps"][args.step]
+        return {"actor": args.approver, "action": step["action"], "category": step["risk"],
+                "target": f"{args.run_id}/{args.step}", "approval": "granted", "outcome": "ok",
+                "note": f"approved by a named human against reference {args.approval_ref}"}
+    mutate(args.run_id,args.request_id,"step.approved",args.approver,args.step,change,audit); print("in_progress")
 
 
 def reject(args) -> None:
@@ -213,7 +253,12 @@ def reject(args) -> None:
         if not step or step["status"] != "awaiting_approval": raise SystemExit(f"step is not awaiting approval: {args.step}")
         step.update(status="rejected", approver=args.approver, approval_ref=args.approval_ref)
         state["run_status"]="rejected"
-    mutate(args.run_id,args.request_id,"step.rejected",args.approver,args.step,change); print("rejected")
+    def audit(state):
+        step = state["steps"][args.step]
+        return {"actor": args.approver, "action": step["action"], "category": step["risk"],
+                "target": f"{args.run_id}/{args.step}", "approval": "denied", "outcome": "blocked",
+                "note": f"declined by a named human against reference {args.approval_ref}"}
+    mutate(args.run_id,args.request_id,"step.rejected",args.approver,args.step,change,audit); print("rejected")
 
 
 def evidence_path(value: str) -> tuple[str,str]:

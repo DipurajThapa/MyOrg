@@ -282,8 +282,8 @@ marked **(new)**.
 | HITL-02 | Approval console + briefs | ✅ | 5-line brief, blast-radius ordering | Local, unauthenticated | — | P1 | 20 tests |
 | HITL-04 | Approval UI in Control Center | ⛔ | Intake/UI-state only | Approve/reject surface | API-02 | P1 | `control-center.tsx` |
 | HITL-06 | Approval attributable | 🟡 | Name + reason required, in event chain | Identity not authenticated | PROD-02 | P1 | `decide()` |
-| AUD-01 **(new, was OBS-05 in REV1)** | Audit-log writer | ⛔ | Nothing | `runtime/audit.py`, hash-chained + fsync, called from gate transitions; behaviour test | — | **P0** | 7 stale lines; no writer |
-| AUD-02 **(new)** | Gated actions produce a log line (test) | ⛔ | Text-grep tests only | Behaviour assertion | AUD-01 | **P0** | `module-audit-log.sh` |
+| AUD-01 **(new, was OBS-05 in REV1)** | Audit-log writer | ✅ | `runtime/audit.py` — nine validated fields, hash-chained, fsynced, under a file lock; `verify` and `tail` CLI. Pre-chain lines are sealed by an anchor digest rather than rewritten. The log follows `MYORG_RUNS_DIR`, so a test can never append to the company record | Only gate transitions are wired; connector execution and SLA events still self-report | — | ~~P0~~ done | 14 tests; live run `live-audit` produced 3 chained entries with no agent involved |
+| AUD-02 **(new)** | Gated actions produce a log line (test) | ✅ | `tests/test_audit.py` (14) + `module-audit-log.sh` L7: the module now asserts the runtime *produces* entries and that the chain verifies, not that the skill text mentions logging | — | AUD-01 | ~~P0~~ done | audit-log module 28 → 32 passed / 0 failed |
 | HITL-07 | Prompt-injection stance | 🟡(doc) | Constitution + agent charters | Runtime enforcement | HOOK-01 | P1 | `CLAUDE.md` §3 |
 | SEC-07 | Least privilege at run time | ⛔ | — | Follows EXEC-01/AGENT-06 | EXEC-01 | P1 | — |
 | VAL-02 | Output quality validation | ✅ | Structural gate + acceptance grader | Grader shares model family | — | P2 | `gold-graded-01` |
@@ -338,7 +338,7 @@ marked **(new)**.
 
 | # | Blocker | Tracker IDs | Why it is P0 | Unlocks |
 |---|---|---|---|---|
-| 1 | Governance evidence is self-reported | AUD-01, AUD-02 | The executor now runs steps unattended; without a system-produced audit trail nothing can prove a gate was honoured, and a skipped gate is invisible. Cheapest P0 and a precondition for trusting every other one. | Trustworthy unattended operation; HITL-05; every governance claim in the ledger |
+| ~~1~~ | ~~Governance evidence is self-reported~~ | AUD-01, AUD-02 | **CLOSED 2026-09-01.** `runtime/audit.py` writes the line as a side effect of the gate; the transition fails closed if the log cannot be written. RCA-A's root cause — control and evidence on the same side of the trust boundary — is removed for gate transitions | Trustworthy unattended operation; HITL-05; every governance claim in the ledger |
 | 2 | Agents cannot use tools | EXEC-01, AGENT-06 | Output is prose about work, not work. Every department capability is currently unfalsifiable. | Real deliverables, data-informed planning, live connectors, real workflows |
 | 3 | Nothing can start work but a person | HOOK-02, HOOK-03, HOOK-04, TOOL-07 | Exception-based autonomy requires the system to notice the exception. | Revenue-engine and compliance skills whose value is timeliness |
 | 4 | The loop is not a supervised service | LOOP-03, DEP-07 | Autonomy currently lasts as long as a terminal stays open. | Unattended operation; SLA clocks; stall alerting |

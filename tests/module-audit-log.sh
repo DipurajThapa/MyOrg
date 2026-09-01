@@ -42,7 +42,10 @@ for i,l in enumerate(open('logs/audit-log.jsonl')):
         assert TS.match(d['ts']), f"bad ts format: {d['ts']}"
         assert d['ts'] >= prev, f"chronology broken: {d['ts']} after {prev}"
         prev=d['ts']
-        assert os.path.exists(d['evidence']), f"evidence path missing: {d['evidence']}"
+        # Run logs under runtime/runs/ are ignored working state -- present on the machine
+        # that produced the entry, absent in a fresh clone. Everything else must be there.
+        if not d['evidence'].startswith('runtime/runs/'):
+            assert os.path.exists(d['evidence']), f"evidence path missing: {d['evidence']}"
     except Exception as e:
         print(f"  ❌ line {i+1}: {e}"); bad+=1
 print(f"  {'✅ PASS' if not bad else '❌ FAIL'}  lines valid: 9 fields, enums (cat/appr/outcome), ISO ts, chronological, evidence exists")
@@ -84,6 +87,17 @@ check "operating-principles §8 rule" "grep -qi 'audit log' company/operating-pr
 check "§8 carries removal note"      "grep -qi 'ships with the audit-log module' company/operating-principles.md"
 check "COO owns periodic review"     "grep -q 'audit-log.jsonl' .claude/agents/coo-operations.md"
 check "registered in routing-map"    "grep -q 'audit-log' company/routing-map.md"
+
+echo ""; echo "── L7 The runtime writes the log itself (behaviour, not prose) ──"
+if python3 -m unittest tests.test_audit >/dev/null 2>&1; then
+  echo "  ✅ PASS  gated transitions produce their own audit line"; pass=$((pass+1))
+else
+  echo "  ❌ FAIL  gated transitions produce their own audit line"; fail=$((fail+1))
+  python3 -m unittest tests.test_audit 2>&1 | tail -20
+fi
+check "writer exists in the runtime"  "[ -f runtime/audit.py ]"
+check "chain verifies end to end"     "python3 -m runtime.audit verify >/dev/null"
+check "gates call the writer"         "grep -q 'audit_log.append' runtime/company_runtime.py"
 
 echo ""; echo "──── MODULE audit-log: $pass passed / $fail failed ────"
 [ $fail -eq 0 ] || exit 1
