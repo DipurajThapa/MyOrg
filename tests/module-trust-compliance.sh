@@ -6,6 +6,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 pass=0; fail=0
 check(){ if eval "$2"; then echo "  ✅ PASS  $1"; pass=$((pass+1)); else echo "  ❌ FAIL  $1"; fail=$((fail+1)); fi; }
+# Windows Git-Bash grep cannot match 4-byte emoji (U+1F7E1 and friends), so a policy
+# marker check would pass on Linux and fail here. Compare the text exactly instead.
+contains(){ python3 -c "import sys,pathlib;sys.exit(0 if sys.argv[2] in pathlib.Path(sys.argv[1]).read_text(encoding='utf-8') else 1)" "$1" "$2"; }
 
 echo "── T1 Skills present ──"
 for s in grc-readiness privacy-program contract-lifecycle reputation-management; do
@@ -29,8 +32,8 @@ echo ""; echo "── T4 Privacy discipline ──"
 check "DSR statutory clocks stated"      "grep -qi 'GDPR: 1 month' .claude/skills/privacy-program/SKILL.md"
 check "breach runbook section exists"    "grep -q 'Breach-notification runbook' .claude/skills/privacy-program/SKILL.md"
 check "72h clock runs from awareness"    "grep -q '72-hour clock runs from' .claude/skills/privacy-program/SKILL.md"
-check "DSR response send is gated"       "grep -q 'sending is 🟡' .claude/skills/privacy-program/SKILL.md"
-check "breach notifications are gated"   "grep -q 'sends are 🟡, human-approved' .claude/skills/privacy-program/SKILL.md"
+check "DSR response send is gated"       "contains .claude/skills/privacy-program/SKILL.md 'sending is 🟡'"
+check "breach notifications are gated"   "contains .claude/skills/privacy-program/SKILL.md 'sends are 🟡, human-approved'"
 check "hard-deletes stay 🔴 (human executes)" "grep -qi 'human executes\|the human execute' .claude/skills/privacy-program/SKILL.md"
 check "identity verification before disclosure" "grep -qi 'Identity verification before disclosure' .claude/skills/privacy-program/SKILL.md"
 check "not legal counsel disclaimer"     "grep -qi 'not legal counsel\|does not opine' .claude/skills/privacy-program/SKILL.md"

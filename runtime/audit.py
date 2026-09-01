@@ -43,7 +43,10 @@ def log_path() -> Path:
     override = os.environ.get(LOG_ENV)
     if override: return Path(override)
     runs = os.environ.get("MYORG_RUNS_DIR")
-    if runs: return Path(runs) / "audit-log.jsonl"
+    # The leading underscore matters: the runtime treats every other *.jsonl in the runs
+    # directory as a run, and would try to replay this one. `_outbox.jsonl` is named the
+    # same way for the same reason.
+    if runs: return Path(runs) / "_audit-log.jsonl"
     return ROOT / "logs" / "audit-log.jsonl"
 
 

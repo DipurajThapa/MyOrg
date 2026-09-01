@@ -6,6 +6,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 pass=0; fail=0
 check(){ if eval "$2"; then echo "  ✅ PASS  $1"; pass=$((pass+1)); else echo "  ❌ FAIL  $1"; fail=$((fail+1)); fi; }
+# Windows Git-Bash grep cannot match 4-byte emoji (U+1F7E1 and friends), so a policy
+# marker check would pass on Linux and fail here. Compare the text exactly instead.
+contains(){ python3 -c "import sys,pathlib;sys.exit(0 if sys.argv[2] in pathlib.Path(sys.argv[1]).read_text(encoding='utf-8') else 1)" "$1" "$2"; }
 
 echo "── V1 Skills present ──"
 for s in ar-collections renewals-retention deal-desk funnel-attribution kpi-tree demand-gen; do
@@ -33,7 +36,7 @@ check "deal-desk: no send without human" "grep -qi 'without explicit human appro
 check "deal-desk: approval matrix"       "grep -qi 'discount' .claude/skills/deal-desk/SKILL.md && grep -qi 'Approval needed' .claude/skills/deal-desk/SKILL.md"
 check "funnel: standing-rule changes gated" "grep -qi 'standing rule' .claude/skills/funnel-attribution/SKILL.md"
 check "demand-gen: no spend without approval" "grep -qi 'No spend' .claude/skills/demand-gen/SKILL.md"
-check "demand-gen: sends stay gated PER-SEND (no automation carve-out)" "grep -q 'every send stays 🟡 per-send' .claude/skills/demand-gen/SKILL.md"
+check "demand-gen: sends stay gated PER-SEND (no automation carve-out)" "contains .claude/skills/demand-gen/SKILL.md 'every send stays 🟡 per-send'"
 check "demand-gen: auto-send fast-lane explicitly not built" "grep -qi 'not.*part of this skill' .claude/skills/demand-gen/SKILL.md"
 check "kpi-tree: no fabricated inputs"   "grep -qi 'Never fabricate' .claude/skills/kpi-tree/SKILL.md"
 check "kpi-tree: gated actions log via audit-log" "grep -q 'audit-log' .claude/skills/kpi-tree/SKILL.md"
