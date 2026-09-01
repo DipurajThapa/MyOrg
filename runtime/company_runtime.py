@@ -261,6 +261,26 @@ def reject(args) -> None:
     mutate(args.run_id,args.request_id,"step.rejected",args.approver,args.step,change,audit); print("rejected")
 
 
+def hold(args) -> None:
+    """Park a step because a control could not run -- never because the work was judged bad.
+
+    The deliverable is kept and handed to a person, so the decision a human makes is about
+    real work they can read, and the agent never has to produce it twice."""
+    proof,proof_hash=evidence_path(args.evidence)
+    def change(state):
+        step=state["steps"].get(args.step)
+        if not step or step["status"] != "in_progress": raise SystemExit(f"step is not in progress: {args.step}")
+        if args.actor != step["owner"]: raise SystemExit(f"step owner is {step['owner']}, not {args.actor}")
+        step.update(status="awaiting_approval", held_reason=args.reason, held_evidence=proof, held_evidence_sha256=proof_hash)
+    def audit(state):
+        step=state["steps"][args.step]
+        return {"actor": args.actor, "action": step["action"], "category": step["risk"],
+                "target": f"{args.run_id}/{args.step}", "approval": "pending",
+                "outcome": "awaiting-approval",
+                "note": "a quality gate could not run, so the work waits for a person"}
+    mutate(args.run_id,args.request_id,"step.held",args.actor,args.step,change,audit); print("awaiting_approval")
+
+
 def evidence_path(value: str) -> tuple[str,str]:
     path=(ROOT/value).resolve()
     try: relative=path.relative_to(ROOT)
@@ -400,10 +420,11 @@ def parser():
     result=argparse.ArgumentParser(description=__doc__); commands=result.add_subparsers(dest="command",required=True)
     command=commands.add_parser("validate"); command.add_argument("workflow"); command.set_defaults(func=validate_cmd)
     command=commands.add_parser("create-run"); command.add_argument("workflow"); command.add_argument("run_id"); command.add_argument("--actor",required=True); command.add_argument("--request-id",required=True); command.add_argument("--org",default=DEFAULT_ORG); command.set_defaults(func=create_run)
-    for name,func in (("request-step",request_step),("fail",fail),("complete",complete)):
+    for name,func in (("request-step",request_step),("fail",fail),("complete",complete),("hold",hold)):
         command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor",required=True); command.add_argument("--request-id",required=True)
         if name == "fail": command.add_argument("--reason",required=True)
         if name == "complete": command.add_argument("--evidence",required=True); command.add_argument("--revision",required=True)
+        if name == "hold": command.add_argument("--evidence",required=True); command.add_argument("--reason",required=True)
         command.set_defaults(func=func)
     for name,func in (("approve",approve),("reject",reject)):
         command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--approver",required=True); command.add_argument("--approval-ref",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=func)

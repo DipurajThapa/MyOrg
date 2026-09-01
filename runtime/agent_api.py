@@ -20,8 +20,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from runtime import company_runtime as core  # noqa: E402
 from runtime import leases  # noqa: E402
-from runtime.executor import (current_state, namespace, quietly,  # noqa: E402
+from runtime.executor import (acceptance_failure, current_state,  # noqa: E402
+                              hold_for_human, namespace, quietly,
                               record_failure, request_id, write_evidence)
+from runtime.backends import ExecutorError  # noqa: E402
 from runtime.health import all_health  # noqa: E402
 from runtime.prompts import (StepRequest, agent_brief, structural_failure)  # noqa: E402
 
@@ -118,16 +120,11 @@ def claim(body: dict) -> dict:
 def graded_failure(run_id, step_id, step, state, output) -> str | None:
     """Work sent in from outside is judged by the same criteria as work done in here.
 
-    Grading needs a model; if that is unavailable the work is accepted unscored rather
-    than blocked, matching how the in-process driver behaves.
+    Grading needs a model. If it cannot answer, this raises rather than returning None:
+    an unreachable grader is not a pass, and the caller parks the work for a person.
     """
     from runtime.backends import ClaudeCliBackend
-    from runtime.executor import acceptance_failure
-    try:
-        return acceptance_failure(run_id, step_id, step, state,
-                                  ClaudeCliBackend(), output)
-    except Exception:  # noqa: BLE001 - a grader outage must not strand a worker
-        return None
+    return acceptance_failure(run_id, step_id, step, state, ClaudeCliBackend(), output)
 
 
 def submit(body: dict) -> dict:
@@ -139,8 +136,16 @@ def submit(body: dict) -> dict:
     if held is None or held.agent != agent:
         raise ApiError(409, f"{agent} does not hold {step_id}")
     state = current_state(run_id)
-    rejection = structural_failure(output) or graded_failure(
-        run_id, step_id, state["steps"][step_id], state, output)
+    rejection = structural_failure(output)
+    if rejection is None:
+        try:
+            rejection = graded_failure(run_id, step_id, state["steps"][step_id], state, output)
+        except ExecutorError as error:
+            # The gate could not run. Keep the worker's output, park the step for a
+            # person, and tell the worker its job is done -- never record a silent pass.
+            hold_for_human(run_id, step_id, agent, output, str(error), log=lambda _m: None)
+            leases.release(run_id, step_id)
+            raise ApiError(503, f"quality gate unavailable; {step_id} is held for a human")
     if rejection:
         record_failure(run_id, step_id, agent, rejection)
         leases.release(run_id, step_id)

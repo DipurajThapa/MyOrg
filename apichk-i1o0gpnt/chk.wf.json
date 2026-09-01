@@ -1,0 +1,1 @@
+{"version": 1, "id": "wf-chk", "goal": "probe", "max_cycles": 20, "steps": [{"id": "s1", "owner": "cto-engineering", "action": "draft", "depends_on": [], "max_attempts": 3, "acceptance": ["Must name an owner"]}]}

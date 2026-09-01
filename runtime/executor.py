@@ -14,6 +14,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import uuid
 from contextlib import redirect_stdout
 from dataclasses import dataclass
@@ -35,6 +36,8 @@ from runtime.prompts import (AGENTS_DIR, CheckRequest, GRADE_PATTERN,  # noqa: E
 # MYORG_RUNS_DIR points at.
 EVIDENCE_DIR = ROOT / "runtime" / "runs"
 MAX_ITERATIONS = 50
+GRADE_ATTEMPTS = 3           # a grader blip must not cost a person's attention
+GRADE_BACKOFF_SECONDS = 2    # multiplied by the attempt number
 HALTED = {"awaiting_approval", "blocked_human"}
 
 
@@ -129,19 +132,37 @@ def acceptance_criteria(run_id: str, step_id: str) -> tuple[str, ...]:
     return ()
 
 
+class GraderUnavailable(ExecutorError):
+    """The acceptance check could not be run at all -- which is not the same as a pass."""
+
+
 def acceptance_failure(run_id, step_id, step, state, backend, output) -> str | None:
-    """Ask an independent grader whether the work actually meets its criteria."""
+    """Ask an independent grader whether the work actually meets its criteria.
+
+    A grader that cannot answer is retried a few times, because a blip should not cost a
+    person's attention. If it still cannot answer, this raises: a control that did not run
+    must never be recorded as one that passed."""
     criteria = acceptance_criteria(run_id, step_id)
     if not criteria:
         return None
-    verdict = backend(GradeRequest(
+    request = GradeRequest(
         step_id=step_id, agent=step["owner"], goal=state["goal"],
         brief=agent_brief(step["owner"]), criteria=criteria,
-        deliverable=clip(output, MAX_SUBMISSION_CHARS)))
-    found = GRADE_PATTERN.search(verdict)
-    if found and found.group(1).upper() == "MEETS":
-        return None
-    return f"did not meet acceptance criteria: {verdict.strip()[:600]}"
+        deliverable=clip(output, MAX_SUBMISSION_CHARS))
+    last = None
+    for attempt in range(1, GRADE_ATTEMPTS + 1):
+        try:
+            verdict = backend(request)
+        except ExecutorError as error:
+            last = error
+            if attempt < GRADE_ATTEMPTS:
+                time.sleep(GRADE_BACKOFF_SECONDS * attempt)
+            continue
+        found = GRADE_PATTERN.search(verdict)
+        if found and found.group(1).upper() == "MEETS":
+            return None
+        return f"did not meet acceptance criteria: {verdict.strip()[:600]}"
+    raise GraderUnavailable(f"{last} (after {GRADE_ATTEMPTS} attempts)")
 
 
 def remembered_for(step_id: str, step: dict, state: dict) -> tuple[str, ...]:
@@ -179,6 +200,32 @@ def record_failure(run_id: str, step_id: str, owner: str, reason: str) -> None:
         raise ExecutorError(f"could not record failure on {step_id}: {error}") from error
 
 
+def hold_for_human(run_id: str, step_id: str, owner: str, output: str,
+                   reason: str, log) -> None:
+    """Keep the work, park the step, tell a person. Never pass what was not graded."""
+    artifact = write_evidence(run_id, step_id, output, "ungraded")
+    try:
+        quietly(core.hold, namespace(run_id=run_id, step=step_id, actor=owner,
+                                     evidence=artifact, reason=reason[:200],
+                                     request_id=request_id(step_id)))
+    except SystemExit as error:
+        raise ExecutorError(f"could not hold {step_id}: {error}") from error
+    log(f"  {step_id}: quality gate could not run -- {reason}; held for a human ({artifact})")
+
+
+def finish_approved_hold(run_id: str, step_id: str, step: dict, state: dict, log) -> bool:
+    """A human approved work whose gate could not run. Use it -- do not produce it again."""
+    held = step.get("held_evidence")
+    if not held:
+        return False
+    try:
+        run_status = finish(run_id, step_id, step["owner"], held, state["workflow_revision"])
+    except SystemExit as error:
+        raise ExecutorError(f"could not complete {step_id}: {error}") from error
+    log(f"  {step_id}: completed with human-approved ungraded work -> {held} (run={run_status})")
+    return True
+
+
 def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
     step = state["steps"][step_id]
     owner = step["owner"]
@@ -197,6 +244,8 @@ def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
         note = "brief written" if written else "no brief -- full work only"
         log(f"  {step_id}: {status} (risk={step['risk']}) -- left for a human, {note}")
         return
+    if finish_approved_hold(run_id, step_id, step, state, log):
+        return
     try:
         output = dispatch(run_id, step_id, step, state, backend)
     except ExecutorError as error:
@@ -208,8 +257,8 @@ def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
         try:
             rejection = acceptance_failure(run_id, step_id, step, state, backend, output)
         except ExecutorError as error:
-            log(f"  {step_id}: could not grade -- {error}; accepting unscored")
-            rejection = None
+            hold_for_human(run_id, step_id, owner, output, str(error), log)
+            return
     if rejection:
         log(f"  {step_id}: rejected -- {rejection}")
         record_failure(run_id, step_id, owner, rejection)

@@ -1,0 +1,1 @@
+{"goal":"probe","id":"wf-chk","max_cycles":20,"steps":[{"acceptance":["Must name an owner"],"action":"draft","depends_on":[],"id":"s1","max_attempts":3,"owner":"cto-engineering"}],"version":1}

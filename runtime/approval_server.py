@@ -108,6 +108,7 @@ def card(decision: Decision, position: int = 0, total: int = 0) -> str:
         f"{html.escape(decision.run_id)}</span>",
         f"<h2>{html.escape(decision.action)} &mdash; "
         f"{html.escape(decision.step_id)}</h2>",
+        f'<p class="impact">{html.escape(decision.reason)}</p>',
         f'<p class="impact">{html.escape(decision.impact)}</p>',
         brief_block(decision),
         context_block(decision),

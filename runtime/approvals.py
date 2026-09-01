@@ -39,6 +39,7 @@ class Decision:
     workflow_id: str
     context: tuple[tuple[str, str], ...] = field(default=())
     brief: Brief | None = None
+    held_reason: str = ""
     unblocks: int = 0
     depth: int = 0
     waiting_since: str = ""
@@ -56,6 +57,9 @@ class Decision:
 
     @property
     def reason(self) -> str:
+        if self.held_reason:
+            # A green step can end up here: the work is fine, the check on it could not run.
+            return f"A quality check could not run, so this needs you \u2014 {self.held_reason}"
         return RISK_REASON.get(self.risk, "Held for review.")
 
 
@@ -129,6 +133,7 @@ def pending(run_id: str | None = None) -> list[Decision]:
                 goal=state["goal"], workflow_id=state["workflow_id"],
                 context=upstream_context(state, step),
                 brief=load_brief(identifier, step_id),
+                held_reason=step.get("held_reason", ""),
                 unblocks=downstream_count(state, step_id),
                 depth=depth_of(state, step_id),
                 waiting_since=state.get("ts", "")))
