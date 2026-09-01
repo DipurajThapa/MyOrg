@@ -200,6 +200,25 @@ class RuntimeGaugesTest(unittest.TestCase):
         self.assertAlmostEqual(series(rendered, "myorg_connector_receipt_unsettled_seconds_max"),
                                1800.0, delta=1.0)
 
+    # --- spend (A-01) -----------------------------------------------------------------
+
+    def test_spend_is_zero_before_anything_has_run(self) -> None:
+        rendered = self.gauges.render()
+        self.assertEqual(series(rendered, "myorg_spend_usd_total"), 0.0)
+        self.assertEqual(series(rendered, "myorg_spend_usd_worst_run"), 0.0)
+
+    def test_what_a_run_spent_reaches_the_scrape(self) -> None:
+        self.make_run("obs-spend")
+        self.park("obs-spend")   # a yellow step; no dispatch, so nothing is charged yet
+        self.assertEqual(series(self.gauges.render(), "myorg_spend_usd_total"), 0.0)
+
+    def test_the_worst_run_is_reported_not_the_average(self) -> None:
+        """An average hides the runaway. The alert reads the worst single run."""
+        from runtime.observability import RuntimeGauges
+        gauges = RuntimeGauges(self.store, ttl_seconds=0)
+        sample = gauges.collect()
+        self.assertLessEqual(sample["spend_usd_worst_run"], sample["spend_usd_total"] + 1e-9)
+
     # --- connector authorization expiry (TOOL-09) -------------------------------------
 
     def authorize(self, connector_id: str, expires_at: str) -> None:

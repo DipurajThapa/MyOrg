@@ -6,6 +6,7 @@ works, which is what lets tests drive real runs without ever calling a model.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -29,6 +30,23 @@ DISPATCH_PROFILE = ("--strict-mcp-config", "--disable-slash-commands")
 
 class ExecutorError(RuntimeError):
     """The driver could not make progress for a reason the runtime cannot record."""
+
+
+class Output(str):
+    """What an agent said, with what it cost to say it.
+
+    A plain `str` everywhere it is already used -- every caller that treats a backend's
+    return value as text keeps working untouched -- and carrying `cost_usd` for the one
+    caller that now needs it. The alternative was returning a tuple and editing every call
+    site, or hanging the figure off the backend instance, which would break the moment two
+    runs were driven at once. This breaks in neither direction.
+    """
+    cost_usd: float = 0.0
+
+    def __new__(cls, text: str, cost_usd: float = 0.0):
+        value = super().__new__(cls, text)
+        value.cost_usd = float(cost_usd)
+        return value
 
 
 class StubBackend:
@@ -72,7 +90,9 @@ class ClaudeCliBackend:
         # prompt nobody is there to answer.
         room = getattr(request, "workspace", None)
         grant = getattr(request, "grant", None)
-        command = ["claude", "-p", request.prompt(), "--output-format", "text",
+        # JSON rather than text, only so the CLI's own `total_cost_usd` comes back with the
+        # answer. Nothing can count what a step spends by inspecting its prose.
+        command = ["claude", "-p", request.prompt(), "--output-format", "json",
                    "--append-system-prompt", request.brief,
                    "--permission-mode", "dontAsk", *DISPATCH_PROFILE]
         if grant and room:
@@ -90,14 +110,22 @@ class ClaudeCliBackend:
             raise ExecutorError(f"step timed out after {self.timeout}s") from error
         if result.returncode != 0:
             raise ExecutorError(f"claude exited {result.returncode}: {result.stderr.strip()[:400]}")
-        output = result.stdout.strip()
+        output, cost = self._unpack(result.stdout)
         if not output:
             raise ExecutorError("agent returned no output")
-        return output + "\n"
+        return Output(output + "\n", cost)
 
-
-BACKENDS = {"claude": ClaudeCliBackend, "stub": StubBackend}
-
+    @staticmethod
+    def _unpack(raw: str) -> tuple[str, float]:
+        """The deliverable and what it cost. A malformed envelope is a failed step, not a
+        free one: reporting zero would let a broken parser look like thrift."""
+        try:
+            answer = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise ExecutorError(f"claude returned unreadable JSON: {str(error)[:200]}") from error
+        if answer.get("is_error"):
+            raise ExecutorError(f"agent reported an error: {str(answer.get('result'))[:200]}")
+        return str(answer.get("result", "")).strip(), float(answer.get("total_cost_usd") or 0.0)
 
 
 BACKENDS = {"claude": ClaudeCliBackend, "stub": StubBackend}

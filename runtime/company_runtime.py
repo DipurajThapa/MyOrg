@@ -377,6 +377,7 @@ def hold(args) -> None:
         if args.actor != step["owner"]: raise SystemExit(f"step owner is {step['owner']}, not {args.actor}")
         check_claim(step, getattr(args, "claim_token", None))
         step.update(status="awaiting_approval", held_reason=args.reason, held_evidence=proof, held_evidence_sha256=proof_hash)
+        charge(state, step, args)
         release_claim(step)
     def audit(state):
         step=state["steps"][args.step]
@@ -408,6 +409,68 @@ def verify_submission(step: dict) -> None:
     if current_hash != submission["evidence_sha256"]: raise SystemExit("submission artifact changed after maker handoff")
 
 
+def charge(state: dict, step: dict, args) -> None:
+    """Add what this dispatch cost to the step and to the run.
+
+    Recorded on the transition the dispatch was going to make anyway -- completed, failed or
+    held -- rather than on a mutation of its own. Every mutation spends a cycle, and the
+    planner budgets roughly two per step, so a dedicated `spend` event would have made every
+    step cost an extra cycle to say what it had already cost in money.
+
+    Consequence worth knowing: a dispatch that dies before any of those three transitions is
+    not counted. That undercounts, never over -- and undercounting is the safe direction for
+    a figure a ceiling is read from, because the ceiling then trips late rather than early.
+    """
+    amount = round(float(getattr(args, "spend", 0.0) or 0.0), 6)
+    if amount <= 0:
+        return
+    step["spend_usd"] = round(step.get("spend_usd", 0.0) + amount, 6)
+    state["spend_usd"] = round(state.get("spend_usd", 0.0) + amount, 6)
+
+
+def extend_budget(args) -> None:
+    """Give a run that exhausted its cycle budget more, and put it back to work.
+
+    REC-11: `blocked_cycle_limit` was terminal, so a run that ran out mid-flight stranded
+    every step it had already finished and re-driving it returned quietly -- an operator
+    retrying could not tell the difference between "resumed" and "did nothing".
+
+    Only the cycle budget needs this. The *cost* ceiling parks a step at
+    `awaiting_approval` instead of ending the run, so it already resumes through `approve`
+    -- which is the whole reason it was built on `hold`. One resume path, not two.
+
+    Writes its own event rather than going through `mutate`, because `mutate` refuses a
+    terminal run and this is the one transition whose entire purpose is to leave one.
+    """
+    if not str(getattr(args, "approver", "")).strip():
+        raise SystemExit("extending a budget is a human decision -- who approved it?")
+    extra = int(args.cycles)
+    if not 1 <= extra <= 100:
+        raise SystemExit("extension must be 1..100 cycles")
+    with run_lock(args.run_id):
+        events = read_events(args.run_id)
+        state = json.loads(json.dumps(events[-1]))
+        # Replay first, then validity. A second call with the same request id is the *same*
+        # extension arriving twice, and by then the run is active again -- so checking the
+        # status first would reject a replay for having succeeded.
+        if any(e.get("request_id") == args.request_id for e in events):
+            print("idempotent replay"); return
+        if state["run_status"] != "blocked_cycle_limit":
+            raise SystemExit(f"run is {state['run_status']}, not out of cycle budget")
+        ceiling = min(100, state["max_cycles"] + extra)
+        if ceiling <= state["max_cycles"]:
+            raise SystemExit(f"max_cycles is already at the {ceiling} ceiling")
+        state.update(seq=state["seq"] + 1, event="run.budget_extended", actor=args.approver,
+                     target=args.run_id, request_id=args.request_id, ts=now(),
+                     run_status="active", max_cycles=ceiling)
+        audit_log.append(actor=args.approver, action="run.budget_extended", category="yellow",
+                         target=args.run_id, approval="granted",
+                         evidence=audit_evidence(args.run_id), outcome="ok",
+                         note=f"cycle budget raised to {ceiling}; {state['cycle_count']} already spent")
+        append_event(args.run_id, state)
+    print(f"active\tmax_cycles={ceiling}")
+
+
 def complete(args) -> None:
     proof,proof_hash=evidence_path(args.evidence)
     def change(state):
@@ -420,6 +483,7 @@ def complete(args) -> None:
         check_claim(step, getattr(args, "claim_token", None))
         step.update(status="awaiting_check" if step.get("checker") else "completed", evidence=proof, evidence_sha256=proof_hash)
         release_claim(step)
+        charge(state, step, args)
         if not step.get("checker"): release_dependents(state)
     state=mutate(args.run_id,args.request_id,"step.completed",args.actor,args.step,change); print(state["run_status"])
 
@@ -432,6 +496,7 @@ def fail(args) -> None:
         check_claim(step, getattr(args, "claim_token", None))
         step["last_failure"]=args.reason
         release_claim(step)
+        charge(state, step, args)
         step["status"]="ready" if step["attempts"] < step["max_attempts"] else "blocked_retry_limit"
         if step["status"] == "blocked_retry_limit": state["run_status"]="blocked_retry_limit"
     state=mutate(args.run_id,args.request_id,"step.failed",args.actor,args.step,change); print(state["steps"][args.step]["status"])
@@ -545,6 +610,7 @@ def parser():
         command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor",required=True); command.add_argument("--message-id",required=True); command.add_argument("--request-id",required=True)
         command.set_defaults(func=func)
     command=commands.add_parser("expire-claim"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor"); command.add_argument("--request-id",required=True); command.set_defaults(func=expire_claim)
+    command=commands.add_parser("extend-budget"); command.add_argument("run_id"); command.add_argument("--cycles",type=int,required=True); command.add_argument("--approver",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=extend_budget)
     command=commands.add_parser("status"); command.add_argument("run_id"); command.add_argument("--json",action="store_true"); command.set_defaults(func=status)
     return result
 

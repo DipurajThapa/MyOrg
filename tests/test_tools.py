@@ -164,7 +164,10 @@ class BackendFlagsTest(unittest.TestCase):
 
         class Done:
             returncode = 0
-            stdout = "a deliverable"
+            # The shape the CLI actually returns since spend became measurable: JSON with
+            # the deliverable in `result` and what it cost alongside. A fake that still
+            # spoke plain text would pass while the real parser broke.
+            stdout = json.dumps({"result": "a deliverable", "total_cost_usd": 0.12})
             stderr = ""
 
         def fake_run(command, **kwargs):
@@ -192,6 +195,25 @@ class BackendFlagsTest(unittest.TestCase):
         command = self.build()["command"]
         self.assertEqual(command[command.index("--tools") + 1], "")
         self.assertEqual(command[command.index("--allowedTools") + 1], "")
+
+    def test_what_a_dispatch_cost_comes_back_with_what_it_said(self) -> None:
+        """A-01 depends on this: an answer that arrived without its price would leave the
+        ceiling counting zero forever."""
+        from unittest.mock import patch
+        from runtime.backends import ClaudeCliBackend
+        from runtime.prompts import StepRequest
+        request = StepRequest(run_id="r", step_id="s", agent="cfo-finance", action="draft",
+                              goal="g", brief="b")
+
+        class Done:
+            returncode = 0
+            stdout = json.dumps({"result": "a deliverable", "total_cost_usd": 0.12})
+            stderr = ""
+
+        with patch("runtime.backends.subprocess.run", lambda *a, **k: Done()):
+            answer = ClaudeCliBackend()(request)
+        self.assertEqual(answer.strip(), "a deliverable")
+        self.assertAlmostEqual(answer.cost_usd, 0.12, places=4)
 
     # --- the dispatch profile (A-09) --------------------------------------------------
 

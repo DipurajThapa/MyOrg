@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -173,12 +174,17 @@ class GraderUnavailable(ExecutorError):
     """The acceptance check could not be run at all -- which is not the same as a pass."""
 
 
-def acceptance_failure(run_id, step_id, step, state, backend, output) -> str | None:
+def acceptance_failure(run_id, step_id, step, state, backend, output,
+                       costs: list | None = None) -> str | None:
     """Ask an independent grader whether the work actually meets its criteria.
 
     A grader that cannot answer is retried a few times, because a blip should not cost a
     person's attention. If it still cannot answer, this raises: a control that did not run
-    must never be recorded as one that passed."""
+    must never be recorded as one that passed.
+
+    `costs` collects what each grading call cost. Grading was measured at roughly 40% of a
+    step's bill, so a spend figure that counts only the dispatch is wrong by nearly half --
+    and the retries above are the expensive case, not the cheap one."""
     criteria = acceptance_criteria(run_id, step_id)
     if not criteria:
         return None
@@ -190,6 +196,8 @@ def acceptance_failure(run_id, step_id, step, state, backend, output) -> str | N
     for attempt in range(1, GRADE_ATTEMPTS + 1):
         try:
             verdict = backend(request)
+            if costs is not None:
+                costs.append(float(getattr(verdict, "cost_usd", 0.0)))
         except ExecutorError as error:
             last = error
             if attempt < GRADE_ATTEMPTS:
@@ -229,18 +237,23 @@ def dispatch(run_id, step_id, step, state, backend) -> tuple:
     return output, tools.produced_files(room)
 
 
-def finish(run_id: str, step_id: str, owner: str, evidence: str, revision: str) -> str:
+def finish(run_id: str, step_id: str, owner: str, evidence: str, revision: str,
+           spend: float = 0.0) -> str:
     return quietly(core.complete, namespace(
-        run_id=run_id, step=step_id, actor=owner, evidence=evidence,
+        run_id=run_id, step=step_id, actor=owner, evidence=evidence, spend=spend,
         revision=revision, claim_token=token_for(run_id, step_id),
         request_id=request_id(run_id, step_id, "complete")))
 
 
-def record_failure(run_id: str, step_id: str, owner: str, reason: str) -> None:
-    """Hand the failure to the state machine so its retry budget decides what happens."""
+def record_failure(run_id: str, step_id: str, owner: str, reason: str,
+                   spend: float = 0.0) -> None:
+    """Hand the failure to the state machine so its retry budget decides what happens.
+
+    A rejected attempt still cost money -- the expensive path in the observed end-to-end run
+    was three of these -- so the charge rides here too, not only on success."""
     try:
         quietly(core.fail, namespace(run_id=run_id, step=step_id, actor=owner,
-                                     reason=reason[:200],
+                                     reason=reason[:200], spend=spend,
                                      claim_token=token_for(run_id, step_id),
                                      request_id=request_id(run_id, step_id, "fail")))
     except SystemExit as error:
@@ -248,12 +261,12 @@ def record_failure(run_id: str, step_id: str, owner: str, reason: str) -> None:
 
 
 def hold_for_human(run_id: str, step_id: str, owner: str, output: str,
-                   reason: str, log) -> None:
+                   reason: str, log, spend: float = 0.0) -> None:
     """Keep the work, park the step, tell a person. Never pass what was not graded."""
     artifact = write_evidence(run_id, step_id, output, "ungraded")
     try:
         quietly(core.hold, namespace(run_id=run_id, step=step_id, actor=owner,
-                                     evidence=artifact, reason=reason[:200],
+                                     evidence=artifact, reason=reason[:200], spend=spend,
                                      claim_token=token_for(run_id, step_id),
                                      request_id=request_id(run_id, step_id, "hold")))
     except SystemExit as error:
@@ -271,6 +284,62 @@ def finish_approved_hold(run_id: str, step_id: str, step: dict, state: dict, log
     except SystemExit as error:
         raise ExecutorError(f"could not complete {step_id}: {error}") from error
     log(f"  {step_id}: completed with human-approved ungraded work -> {held} (run={run_status})")
+    return True
+
+
+def run_ceiling_usd() -> float:
+    """What one run may spend before it stops and asks. 0 disables the ceiling.
+
+    The default comes from measurement, not taste: a real graded step cost about $0.80 warm
+    and a cold first dispatch about $2.80, so $5 buys a normal run of five or six steps and
+    stops the retry loop that the observed end-to-end run fell into on its third attempt.
+    """
+    try:
+        return max(0.0, float(os.environ.get("MYORG_RUN_CEILING_USD", "5")))
+    except ValueError:
+        return 5.0
+
+
+def over_budget(run_id: str, step_id: str, owner: str, state: dict, log) -> bool:
+    """Stop before spending, not after. Returns True if the step was parked.
+
+    Deliberately *fails open*. If the spend figure cannot be read, the step runs: a broken
+    counter must not be able to halt the company. That is the opposite of the grading rule,
+    where an unreadable control parks the work -- and the asymmetry is intentional. A grader
+    that cannot run risks shipping bad work; a spend counter that cannot run risks only
+    overspending, which the ceiling's own alert catches. Do not "fix" this into failing
+    closed without changing that reasoning first.
+    """
+    ceiling = run_ceiling_usd()
+    if not ceiling:
+        return False
+    try:
+        # Re-read rather than trust the caller's copy. `advance` loads the run once per
+        # iteration and drives every ready step from that snapshot, so a step later in the
+        # same pass would otherwise see the spend as it was *before* its siblings ran --
+        # and a ceiling that reads a stale figure is not a ceiling.
+        spent = float(current_state(run_id).get("spend_usd", 0.0) or 0.0)
+    except (TypeError, ValueError, SystemExit, KeyError):
+        spent = float(state.get("spend_usd", 0.0) or 0.0) if isinstance(
+            state.get("spend_usd", 0.0), (int, float)) else 0.0
+    if spent < ceiling:
+        return False
+    reason = (f"run has spent ${spent:.2f} of its ${ceiling:.2f} ceiling; "
+              f"approve to continue or raise MYORG_RUN_CEILING_USD")
+    note = (f"This step was not dispatched. The run reached its cost ceiling first.\n\n"
+            f"Spent so far: ${spent:.2f}\nCeiling: ${ceiling:.2f}\n\n"
+            f"Approving this step continues the run. Nothing has been produced for it yet, "
+            f"so approval buys the work rather than accepting it.")
+    artifact = write_evidence(run_id, step_id, note, "over-budget")
+    try:
+        quietly(core.hold, namespace(run_id=run_id, step=step_id, actor=owner,
+                                     evidence=artifact, reason=reason[:200], spend=0.0,
+                                     claim_token=token_for(run_id, step_id),
+                                     request_id=request_id(run_id, step_id, "over-budget")))
+    except SystemExit as error:
+        log(f"  {step_id}: over budget but could not be parked -- {error}")
+        return False
+    log(f"  {step_id}: not dispatched -- {reason}")
     return True
 
 
@@ -305,28 +374,35 @@ def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
         return
     if finish_approved_hold(run_id, step_id, step, state, log):
         return
+    if over_budget(run_id, step_id, owner, state, log):
+        return
+    # Everything this dispatch costs, whatever it ends up doing. A rejected attempt is
+    # still paid for, and grading is roughly 40% of the bill, so both are counted.
+    costs: list[float] = []
     try:
         output, produced = dispatch(run_id, step_id, step, state, backend)
     except ExecutorError as error:
         log(f"  {step_id}: agent failed -- {error}")
-        record_failure(run_id, step_id, owner, str(error))
+        record_failure(run_id, step_id, owner, str(error), spend=sum(costs))
         return
+    costs.append(float(getattr(output, "cost_usd", 0.0)))
     rejection = structural_failure(output)
     if rejection is None:
         try:
-            rejection = acceptance_failure(run_id, step_id, step, state, backend, output)
+            rejection = acceptance_failure(run_id, step_id, step, state, backend, output, costs)
         except ExecutorError as error:
-            hold_for_human(run_id, step_id, owner, output, str(error), log)
+            hold_for_human(run_id, step_id, owner, output, str(error), log, spend=sum(costs))
             return
     if rejection:
         log(f"  {step_id}: rejected -- {rejection}")
-        record_failure(run_id, step_id, owner, rejection)
+        record_failure(run_id, step_id, owner, rejection, spend=sum(costs))
         return
     # The reply and the files are one deliverable: the manifest goes inside the evidence,
     # so the hash the runtime records covers what was produced as well as what was said.
     evidence = write_evidence(run_id, step_id, output + "\n\n" + tools.manifest(produced))
     try:
-        run_status = finish(run_id, step_id, owner, evidence, state["workflow_revision"])
+        run_status = finish(run_id, step_id, owner, evidence, state["workflow_revision"],
+                            spend=sum(costs))
     except SystemExit as error:
         raise ExecutorError(f"could not complete {step_id}: {error}") from error
     log(f"  {step_id}: completed by {owner} -> {evidence} (run={run_status})")
@@ -337,7 +413,19 @@ def advance(run_id: str, backend, max_iterations: int = MAX_ITERATIONS, log=prin
     for _ in range(max_iterations):
         state = current_state(run_id)
         if state["run_status"] != "active":
-            log(f"run {run_id}: {state['run_status']}")
+            # REC-11: a terminal run used to be reported with its bare status, so an
+            # operator re-driving one saw the same shape of line as a run that had just
+            # done work. Say what it means and what can be done about it.
+            recovery = {"blocked_cycle_limit":
+                        " -- out of cycle budget; `extend-budget` to continue it",
+                        "blocked_retry_limit":
+                        " -- every attempt failed; the workflow needs changing, not retrying",
+                        "blocked_review_limit":
+                        " -- the checker kept returning it; a person should look",
+                        "blocked_human":
+                        " -- a red step was handed back; it is never automated",
+                        }.get(state["run_status"], " -- nothing further will happen on its own")
+            log(f"run {run_id}: {state['run_status']}{recovery}")
             return state
         # `in_progress` covers steps a human has just approved: claimed already, but
         # still needing the agent to do the work.

@@ -111,6 +111,25 @@ running and still behind, a provider is retrying in a loop: find the source with
 `GET /v1/schedules` and the `trigger_intake.source_ref` column, and pause that trigger.
 Planning costs money, so a backlog left alone is a bill, not just a delay.
 
+## A run is spending too much
+
+`MyOrgRunSpendHigh` fires at $3; the ceiling parks the run at $5 (`MYORG_RUN_CEILING_USD`).
+The gap is deliberate — it is time to look, not yet time to stop.
+
+Almost always a retry loop: a step failing its acceptance criteria over and over, each
+attempt costing a full dispatch **plus** a grading pass. Grading is about 40% of the bill,
+so three retries is roughly six paid calls. `python -m runtime.health` names the run;
+`spend_usd` on the run and on each step says where it went.
+
+When the ceiling does park a step, that step sits at `awaiting_approval` with the figures in
+its reason. Approving it buys the next step — it does not lift the ceiling, so a genuinely
+expensive run asks again. If the work is worth it, raise `MYORG_RUN_CEILING_USD` and restart
+the scheduler rather than approving repeatedly.
+
+**A run out of *cycles* is a different thing** and is not about money:
+`python -m runtime.company_runtime extend-budget <run> --cycles 10 --approver <you>
+--request-id <id>`. Completed steps are kept; nothing is re-run.
+
 ## Autonomy metrics blind
 
 `MyOrgAutonomyMetricsBlind` (`myorg_runtime_snapshot_ok 0`) means the runtime cannot read its

@@ -167,6 +167,25 @@ class RuntimeGauges:
         sample["receipts_in_flight"] = count
         sample["receipt_unsettled_seconds_max"] = _age_seconds(oldest, now)
 
+    def _spend(self, sample: dict, now: datetime) -> None:
+        """What the runs on this host have cost, and the worst single offender.
+
+        Read from the run log, which is where spend is recorded, so this reports the same
+        figure the ceiling reads rather than a second opinion about it.
+        """
+        from runtime.executor import current_state
+        from runtime import company_runtime as core
+        total, worst = 0.0, 0.0
+        for path in core.run_files():
+            try:
+                spent = float(current_state(path.stem).get("spend_usd", 0.0) or 0.0)
+            except Exception:  # noqa: BLE001 - one unreadable run must not blind the rest
+                continue
+            total += spent
+            worst = max(worst, spent)
+        sample["spend_usd_total"] = round(total, 4)
+        sample["spend_usd_worst_run"] = round(worst, 4)
+
     def _authorizations(self, sample: dict, now: datetime) -> None:
         """Seconds until the first enabled connector loses its authorization.
 
@@ -191,9 +210,10 @@ class RuntimeGauges:
                         "approvals_waiting": 0, "approval_wait_seconds_max": 0.0,
                         "trigger_queue_depth": 0, "trigger_queue_oldest_seconds": 0.0,
                         "receipts_in_flight": 0, "receipt_unsettled_seconds_max": 0.0,
-                        "authorization_expires_seconds": NO_AUTHORIZATION_EXPIRY, "ok": 1}
+                        "authorization_expires_seconds": NO_AUTHORIZATION_EXPIRY,
+                        "spend_usd_total": 0.0, "spend_usd_worst_run": 0.0, "ok": 1}
         for source in (self._runs, self._approvals, self._notices, self._triggers,
-                       self._receipts, self._authorizations):
+                       self._receipts, self._authorizations, self._spend):
             try:
                 source(sample, moment)
             except Exception:  # noqa: BLE001 - a scrape must never take the server down
@@ -249,6 +269,12 @@ class RuntimeGauges:
             "# HELP myorg_connector_receipt_unsettled_seconds_max Age of the oldest unresolved call.",
             "# TYPE myorg_connector_receipt_unsettled_seconds_max gauge",
             f'myorg_connector_receipt_unsettled_seconds_max {sample["receipt_unsettled_seconds_max"]:.1f}',
+            "# HELP myorg_spend_usd_total What the runs on this host have cost so far.",
+            "# TYPE myorg_spend_usd_total gauge",
+            f'myorg_spend_usd_total {sample["spend_usd_total"]:.4f}',
+            "# HELP myorg_spend_usd_worst_run The costliest single run.",
+            "# TYPE myorg_spend_usd_worst_run gauge",
+            f'myorg_spend_usd_worst_run {sample["spend_usd_worst_run"]:.4f}',
             "# HELP myorg_connector_authorization_expires_seconds Until the first enabled connector loses access; negative once it has.",
             "# TYPE myorg_connector_authorization_expires_seconds gauge",
             f'myorg_connector_authorization_expires_seconds {sample["authorization_expires_seconds"]:.0f}',

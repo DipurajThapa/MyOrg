@@ -90,6 +90,36 @@ for. Mitigated by reusing `hold` (work is kept, approval resumes it, the agent n
 stop the spend, and the failure mode is unattended-at-3am.
 **Priority: P0 among these.**
 
+### A-01 — what building it actually taught
+
+Three things, none of them in the plan.
+
+**1. The ceiling read stale state, and a stale ceiling is not a ceiling.** `advance()` loads
+the run once per pass and drives every ready step from that snapshot, so the second step in a
+pass saw the spend as it stood *before* its sibling ran. Caught by a test that expected step
+two to park and found it completed. `over_budget` now re-reads rather than trusting its
+caller's copy.
+
+**2. The cost budget needed no extension command.** Building it on `hold` meant it inherited
+VAL-07's resume path — approve the parked step and the run continues with nothing re-done. So
+A-05 shrank to the *cycle* limit alone. That is the leverage §4 predicted, arriving in the
+opposite direction from the one expected: instead of one mechanism serving two budgets, one
+budget turned out not to need the mechanism.
+
+**3. A fixture that lied.** Five tests broke because a fake `subprocess.run` still returned
+plain text after the backend moved to JSON. The fake was passing while the real parser would
+have failed. **Third time in this cycle** that a harness produced a confident wrong answer —
+after the `PASS`/`MEETS` mismatch and the warm/cold verdict inversion. The pattern is worth
+stating: *every fake that stands in for a real interface eventually describes an interface
+that no longer exists*, and nothing warns you, because a fake never fails on its own.
+
+**The asymmetry, stated in the code so it survives.** The budget check **fails open**. A
+spend counter that cannot be read must not halt the company, which is the opposite of the
+grading rule where an unreadable control parks the work. A grader that cannot run risks
+shipping bad work; a counter that cannot run risks only overspending, which the alert catches.
+The comment says so at the call site, because the next reader will otherwise "fix" the
+inconsistency and hand the runtime a new way to stop itself.
+
 ### A-02 — Close the escalation loop with an SLA clock (HOOK-04)
 
 **Problem.** Notices are raised correctly and deduped correctly, and then nothing happens.
@@ -521,8 +551,8 @@ validation (§6) has passed.
 
 | ID | Mechanism | Problem | Evidence | Value | Depends on | Key risk | Validation gate | Pri | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| **A-01** | Per-run and per-org cost ceiling, parking via `hold` | Spend is uncapped; `max_cycles` bounds mutations, not money | Real-model run: 3 retries × full model calls, no ceiling **[V]** | Only uncapped path to real loss | A-06 for honest accounting | Token usage may be unavailable | **Does `claude -p` report usage?** | **P0** | Proposed — gated |
-| **A-05** | Budget extension, generic over cycles and cost | `blocked_cycle_limit` is terminal, strands work, silent re-drive | Probe P3 **[V]** | Removes a dead end; prevents A-01 duplicating it | — | Two budgets, one vocabulary | Extension must not re-dispatch finished steps | **P1** | Proposed — design with A-01 |
+| **A-01** | Per-run cost ceiling, parking via `hold` | Spend was uncapped; `max_cycles` bounds mutations, not money | Real-model run: 3 retries × full calls, no ceiling **[V]**; the CLI reports `total_cost_usd` so no pricing table was needed | The only uncapped path to real loss — every other control fails safe, this failed expensive | A-06 | Ceiling must **fail open**, unlike every other control here | Done — 18 tests in `test_budget.py` | ~~P0~~ | **✅ Applied** — `MYORG_RUN_CEILING_USD`, default $5 |
+| **A-05** | `extend-budget` for the cycle limit | `blocked_cycle_limit` was terminal, stranded work, and re-driving was a silent no-op | Probe P3 **[V]** | Removes a dead end. **Needed for cycles only** — building the cost ceiling on `hold` meant it already had a resume path | — | — | Done — 7 tests; completed steps proven untouched | ~~P1~~ | **✅ Applied** |
 | **A-06** | `request_id` from (step, attempt, **verb**) | WF-04 replay protection was unreachable on the autonomous path | Probe P6 **[V]**; ten call sites found, not the two assumed | Makes replay protection reachable. **Protects the write, not the spend** — re-dispatch is A-01's problem | — | Two collisions found while building: verbs, and **actors** (a worker's claim answered with the driver's result) | Done — 5 tests in `test_executor.py` | ~~P1~~ | **✅ Applied** |
 | **A-04** | Run retrospective → memory → planner recall | Run N+1 is exactly as good as run N | `propose_lesson` is the only runtime writer **[V-static]** | Compounding; execution → improvement | Memory recall quality | Teaches the planner to be confidently wrong | Recall precision at 50 entries | **P1** | Proposed — validate recall first |
 | **A-09** | Trim the dispatch context profile | A dispatch inherited the operator's own MCP connectors, and paid to load skills no grant lets it invoke | **Measured:** $0.5074 → $0.4258 warm, quality 6/6 **[V]**. `Skill` is in no grant; the repo ships no `.mcp.json` | ~16% off every dispatch — but the real win is **containment**: a finance step no longer inherits somebody's inbox | — | — | Done — §6.1; 3 tests in `test_tools.py` | ~~P1~~ | **✅ Applied** — `DISPATCH_PROFILE` in `backends.py` |

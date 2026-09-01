@@ -69,6 +69,18 @@ groups:
           summary: A run can no longer move and is not waiting on anybody
           runbook: docs/OPERATIONS-RUNBOOK.md#stalled-runs
 
+      - alert: MyOrgRunSpendHigh
+        # The ceiling parks a run at $5 by default, so this fires while there is still room
+        # to look rather than after the stop. A run costing this much is usually a retry
+        # loop, not unusually hard work.
+        expr: myorg_spend_usd_worst_run{job="myorg-runtime"} > 3
+        for: 5m
+        labels: { severity: medium }
+        annotations:
+          summary: A single run has spent more than $3
+          description: Check for a step failing its acceptance criteria repeatedly; each retry is a full dispatch plus a grading pass.
+          runbook: docs/OPERATIONS-RUNBOOK.md#a-run-is-spending-too-much
+
       - alert: MyOrgConnectorAuthorizationExpiring
         # Access dies at a moment nobody chose, mid-run, and the failure looks like a bug.
         # Fourteen days is enough to get a human through an OAuth flow without urgency.
