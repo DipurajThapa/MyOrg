@@ -8,7 +8,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -23,12 +23,51 @@ DEFAULT_ORG = os.environ.get("MYORG_ORG_ID", "default")
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 TERMINAL = {"completed", "rejected", "blocked_human", "blocked_retry_limit"}
 TERMINAL_RUN = TERMINAL | {"blocked_cycle_limit", "blocked_review_limit"}
+CLAIM_SECONDS = int(os.environ.get("MYORG_CLAIM_SECONDS", "600"))
 MESSAGE_KINDS = {"handoff", "question", "answer", "feedback", "decision"}
 CLASSIFICATIONS = {"public", "internal", "confidential"}
 
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def stamp(seconds: int) -> str:
+    moment = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+    return moment.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def claim_is_live(step: dict) -> bool:
+    """Is somebody actually doing this step right now?"""
+    return bool(step.get("holder")) and str(step.get("claim_expires_at", "")) > now()
+
+
+def mint_claim(state: dict, step: dict, holder: str) -> None:
+    """Hand the step to one holder, with a token that only ever increases.
+
+    The token is the sequence number of the event that grants it, so a later claim always
+    outranks an earlier one and a stale holder's write can be told apart from the current
+    holder's -- the fencing-token rule."""
+    step["holder"] = holder
+    step["claim_token"] = f"{state['run_id']}#{state['seq'] + 1}"
+    step["claim_expires_at"] = stamp(CLAIM_SECONDS)
+
+
+def release_claim(step: dict) -> None:
+    step.update(holder="", claim_token="", claim_expires_at="")
+
+
+def check_claim(step: dict, supplied: str | None) -> None:
+    """Reject a write from anyone but the current holder.
+
+    A caller that supplies no token at all is the human operator at the CLI, and is let
+    through: the machine callers (the driver and the agent API) always carry one, and a
+    person with shell access can already do anything. A *wrong* token is always refused --
+    that is the case where two automated holders raced."""
+    if supplied is None: return
+    current = step.get("claim_token") or ""
+    if supplied != current:
+        raise SystemExit(f"stale claim: {supplied!r} is not the current claim on this step")
 
 
 def load_json(path: Path) -> dict:
@@ -203,7 +242,7 @@ def create_run(args) -> None:
         if path.exists(): raise SystemExit(f"run already exists: {run_id}")
         states = {}
         for step in workflow["steps"]:
-            states[step["id"]] = {"status":"ready" if not step.get("depends_on") else "pending", "attempts":0, "owner":step["owner"], "checker":step.get("checker"), "review_cycles":0, "max_review_cycles":step.get("max_review_cycles",0), "submissions":[], "action":step["action"], "risk":policy()[step["action"]], "max_attempts":step["max_attempts"], "depends_on":step.get("depends_on", [])}
+            states[step["id"]] = {"status":"ready" if not step.get("depends_on") else "pending", "attempts":0, "owner":step["owner"], "checker":step.get("checker"), "review_cycles":0, "max_review_cycles":step.get("max_review_cycles",0), "submissions":[], "action":step["action"], "risk":policy()[step["action"]], "max_attempts":step["max_attempts"], "depends_on":step.get("depends_on", []), "holder":"", "claim_token":"", "claim_expires_at":""}
         state = {"seq":1,"event":"run.created","target":run_id,"request_id":args.request_id,"actor":args.actor,"ts":now(),"run_id":run_id,"org_id":getattr(args,"org",None) or DEFAULT_ORG,"workflow_id":workflow["id"],"workflow_revision":revision(workflow),"goal":workflow["goal"],"max_cycles":workflow["max_cycles"],"cycle_count":0,"run_status":"active","messages":[],"steps":states}
         append_event(run_id, state)
         snapshot = RUNS / f"{run_id}.workflow.json"
@@ -218,7 +257,9 @@ def request_step(args) -> None:
         if args.actor != step["owner"]: raise SystemExit(f"step owner is {step['owner']}, not {args.actor}")
         if step["risk"] == "red": step["status"] = "blocked_human"; state["run_status"]="blocked_human"
         elif step["risk"] == "yellow": step["status"] = "awaiting_approval"
-        else: step["status"] = "in_progress"; step["attempts"] += 1
+        else:
+            step["status"] = "in_progress"; step["attempts"] += 1
+            mint_claim(state, step, getattr(args, "holder", None) or args.actor)
     def audit(state):
         step = state["steps"][args.step]
         if step["risk"] == "green": return None  # ordinary work is not a gated action
@@ -239,6 +280,7 @@ def approve(args) -> None:
         if not step or step["status"] != "awaiting_approval": raise SystemExit(f"step is not awaiting approval: {args.step}")
         if not args.approval_ref.strip(): raise SystemExit("approval_ref is required")
         step.update(status="in_progress", attempts=step["attempts"]+1, approver=args.approver, approval_ref=args.approval_ref)
+        release_claim(step)  # the human hands it back; the next driver claims it
     def audit(state):
         step = state["steps"][args.step]
         return {"actor": args.approver, "action": step["action"], "category": step["risk"],
@@ -261,6 +303,39 @@ def reject(args) -> None:
     mutate(args.run_id,args.request_id,"step.rejected",args.approver,args.step,change,audit); print("rejected")
 
 
+def take(args) -> None:
+    """Pick up a step nobody is holding. Refuses to steal live work."""
+    def change(state):
+        step = state["steps"].get(args.step)
+        if not step or step["status"] != "in_progress": raise SystemExit(f"step is not in progress: {args.step}")
+        if args.actor != step["owner"]: raise SystemExit(f"step owner is {step['owner']}, not {args.actor}")
+        if claim_is_live(step) and step["holder"] != args.holder:
+            raise SystemExit(f"{step['holder']} already holds {args.step} until {step['claim_expires_at']}")
+        mint_claim(state, step, args.holder)
+    state = mutate(args.run_id,args.request_id,"step.taken",args.actor,args.step,change)
+    print(state["steps"][args.step]["claim_token"])
+
+
+def expire_claim(args) -> None:
+    """Reclaim a step from a holder that is never coming back.
+
+    Deliberately an operator action rather than something the driver may do to itself:
+    forcing a claim open is how two holders end up on one step, so it is recorded."""
+    def change(state):
+        step = state["steps"].get(args.step)
+        if not step: raise SystemExit(f"unknown step: {args.step}")
+        if not step.get("holder"): raise SystemExit(f"nobody holds {args.step}")
+        step["claim_expires_at"] = now()
+    def audit(state):
+        step = state["steps"][args.step]
+        return {"actor": getattr(args, "actor", None) or "operator", "action": step["action"],
+                "category": step["risk"], "target": f"{args.run_id}/{args.step}",
+                "approval": "not-required", "outcome": "ok",
+                "note": "an operator reclaimed a step from a holder that stopped responding"}
+    mutate(args.run_id,args.request_id,"claim.expired",getattr(args,"actor",None) or "operator",args.step,change,audit)
+    print("expired")
+
+
 def hold(args) -> None:
     """Park a step because a control could not run -- never because the work was judged bad.
 
@@ -271,7 +346,9 @@ def hold(args) -> None:
         step=state["steps"].get(args.step)
         if not step or step["status"] != "in_progress": raise SystemExit(f"step is not in progress: {args.step}")
         if args.actor != step["owner"]: raise SystemExit(f"step owner is {step['owner']}, not {args.actor}")
+        check_claim(step, getattr(args, "claim_token", None))
         step.update(status="awaiting_approval", held_reason=args.reason, held_evidence=proof, held_evidence_sha256=proof_hash)
+        release_claim(step)
     def audit(state):
         step=state["steps"][args.step]
         return {"actor": args.actor, "action": step["action"], "category": step["risk"],
@@ -311,7 +388,9 @@ def complete(args) -> None:
         if args.actor != step["owner"]: raise SystemExit(f"step owner is {step['owner']}, not {args.actor}")
         submission={"submission_revision":len(step["submissions"])+1,"evidence":proof,"evidence_sha256":proof_hash,"maker":args.actor,"submitted_at":now()}
         step["submissions"].append(submission)
+        check_claim(step, getattr(args, "claim_token", None))
         step.update(status="awaiting_check" if step.get("checker") else "completed", evidence=proof, evidence_sha256=proof_hash)
+        release_claim(step)
         if not step.get("checker"): release_dependents(state)
     state=mutate(args.run_id,args.request_id,"step.completed",args.actor,args.step,change); print(state["run_status"])
 
@@ -321,7 +400,9 @@ def fail(args) -> None:
         step=state["steps"].get(args.step)
         if not step or step["status"] != "in_progress": raise SystemExit(f"step is not in progress: {args.step}")
         if args.actor != step["owner"]: raise SystemExit(f"step owner is {step['owner']}, not {args.actor}")
+        check_claim(step, getattr(args, "claim_token", None))
         step["last_failure"]=args.reason
+        release_claim(step)
         step["status"]="ready" if step["attempts"] < step["max_attempts"] else "blocked_retry_limit"
         if step["status"] == "blocked_retry_limit": state["run_status"]="blocked_retry_limit"
     state=mutate(args.run_id,args.request_id,"step.failed",args.actor,args.step,change); print(state["steps"][args.step]["status"])
@@ -420,11 +501,13 @@ def parser():
     result=argparse.ArgumentParser(description=__doc__); commands=result.add_subparsers(dest="command",required=True)
     command=commands.add_parser("validate"); command.add_argument("workflow"); command.set_defaults(func=validate_cmd)
     command=commands.add_parser("create-run"); command.add_argument("workflow"); command.add_argument("run_id"); command.add_argument("--actor",required=True); command.add_argument("--request-id",required=True); command.add_argument("--org",default=DEFAULT_ORG); command.set_defaults(func=create_run)
-    for name,func in (("request-step",request_step),("fail",fail),("complete",complete),("hold",hold)):
+    for name,func in (("request-step",request_step),("fail",fail),("complete",complete),("hold",hold),("take",take)):
         command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor",required=True); command.add_argument("--request-id",required=True)
         if name == "fail": command.add_argument("--reason",required=True)
         if name == "complete": command.add_argument("--evidence",required=True); command.add_argument("--revision",required=True)
         if name == "hold": command.add_argument("--evidence",required=True); command.add_argument("--reason",required=True)
+        if name in ("request-step","take"): command.add_argument("--holder")
+        if name in ("complete","fail","hold"): command.add_argument("--claim-token")
         command.set_defaults(func=func)
     for name,func in (("approve",approve),("reject",reject)):
         command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--approver",required=True); command.add_argument("--approval-ref",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=func)
@@ -432,6 +515,7 @@ def parser():
     for name,func in (("check-approve",check_approve),("check-return",check_return),("check-reject",check_reject)):
         command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor",required=True); command.add_argument("--message-id",required=True); command.add_argument("--request-id",required=True)
         command.set_defaults(func=func)
+    command=commands.add_parser("expire-claim"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor"); command.add_argument("--request-id",required=True); command.set_defaults(func=expire_claim)
     command=commands.add_parser("status"); command.add_argument("run_id"); command.add_argument("--json",action="store_true"); command.set_defaults(func=status)
     return result
 

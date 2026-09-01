@@ -84,6 +84,12 @@ def open_work(agent: str | None = None) -> list[dict]:
     return offers
 
 
+def holder_for(agent: str) -> str:
+    """One holder identity per outside worker, stable from claim to submit, and always
+    distinct from an in-process driver's."""
+    return f"api-{agent}"
+
+
 def claim(body: dict) -> dict:
     """Take a step and get everything needed to do it. The runtime vets the claim."""
     from runtime.executor import last_feedback, remembered_for, upstream_handoffs
@@ -98,7 +104,8 @@ def claim(body: dict) -> dict:
         raise ApiError(409, f"{step_id} is already held by {held.agent}")
     try:
         status = quietly(core.request_step, namespace(
-            run_id=run_id, step=step_id, actor=agent, request_id=request_id(step_id)))
+            run_id=run_id, step=step_id, actor=agent, holder=holder_for(agent),
+            request_id=request_id(step_id)))
     except SystemExit as error:
         raise ApiError(409, str(error)) from error
     if status != "in_progress":
@@ -154,7 +161,9 @@ def submit(body: dict) -> dict:
     try:
         run_status = quietly(core.complete, namespace(
             run_id=run_id, step=step_id, actor=agent, evidence=evidence,
-            revision=state["workflow_revision"], request_id=request_id(step_id)))
+            revision=state["workflow_revision"],
+            claim_token=state["steps"][step_id].get("claim_token") or None,
+            request_id=request_id(step_id)))
     except SystemExit as error:
         raise ApiError(409, str(error)) from error
     leases.release(run_id, step_id)

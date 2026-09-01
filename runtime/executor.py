@@ -39,6 +39,9 @@ MAX_ITERATIONS = 50
 GRADE_ATTEMPTS = 3           # a grader blip must not cost a person's attention
 GRADE_BACKOFF_SECONDS = 2    # multiplied by the attempt number
 HALTED = {"awaiting_approval", "blocked_human"}
+# One identity per driver process. Two drivers must be able to tell each other apart, and
+# the role name cannot do that -- an outside worker acts as the same department.
+HOLDER = f"executor-{uuid.uuid4().hex[:8]}"
 
 
 def namespace(**fields) -> argparse.Namespace:
@@ -75,7 +78,18 @@ def request_id(step_id: str) -> str:
 def claim(run_id: str, step_id: str, owner: str) -> str:
     """Move a ready step into whatever the policy says comes next. Returns that status."""
     return quietly(core.request_step, namespace(
-        run_id=run_id, step=step_id, actor=owner, request_id=request_id(step_id)))
+        run_id=run_id, step=step_id, actor=owner, holder=HOLDER,
+        request_id=request_id(step_id)))
+
+
+def take(run_id: str, step_id: str, owner: str) -> None:
+    """Pick up an in-progress step nobody is holding -- the human-approved case."""
+    quietly(core.take, namespace(run_id=run_id, step=step_id, actor=owner,
+                                 holder=HOLDER, request_id=request_id(step_id)))
+
+
+def token_for(run_id: str, step_id: str) -> str | None:
+    return current_state(run_id)["steps"][step_id].get("claim_token") or None
 
 
 def upstream_handoffs(state: dict, step: dict) -> tuple[Handoff, ...]:
@@ -188,14 +202,17 @@ def dispatch(run_id: str, step_id: str, step: dict, state: dict, backend) -> str
 def finish(run_id: str, step_id: str, owner: str, evidence: str, revision: str) -> str:
     return quietly(core.complete, namespace(
         run_id=run_id, step=step_id, actor=owner, evidence=evidence,
-        revision=revision, request_id=request_id(step_id)))
+        revision=revision, claim_token=token_for(run_id, step_id),
+        request_id=request_id(step_id)))
 
 
 def record_failure(run_id: str, step_id: str, owner: str, reason: str) -> None:
     """Hand the failure to the state machine so its retry budget decides what happens."""
     try:
         quietly(core.fail, namespace(run_id=run_id, step=step_id, actor=owner,
-                                     reason=reason[:200], request_id=request_id(step_id)))
+                                     reason=reason[:200],
+                                     claim_token=token_for(run_id, step_id),
+                                     request_id=request_id(step_id)))
     except SystemExit as error:
         raise ExecutorError(f"could not record failure on {step_id}: {error}") from error
 
@@ -207,6 +224,7 @@ def hold_for_human(run_id: str, step_id: str, owner: str, output: str,
     try:
         quietly(core.hold, namespace(run_id=run_id, step=step_id, actor=owner,
                                      evidence=artifact, reason=reason[:200],
+                                     claim_token=token_for(run_id, step_id),
                                      request_id=request_id(step_id)))
     except SystemExit as error:
         raise ExecutorError(f"could not hold {step_id}: {error}") from error
@@ -230,7 +248,18 @@ def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
     step = state["steps"][step_id]
     owner = step["owner"]
     if step["status"] == "in_progress":
-        # A human approved it; the step is already claimed and is the agent's to finish.
+        # Either a human approved it and handed it back, or another holder is mid-flight.
+        if core.claim_is_live(step) and step.get("holder") != HOLDER:
+            log(f"  {step_id}: held by {step['holder']} until {step['claim_expires_at']} -- left alone")
+            return
+        if step.get("holder") != HOLDER:
+            try:
+                take(run_id, step_id, owner)
+            except SystemExit as error:
+                log(f"  {step_id}: could not take -- {error}")
+                return
+            state = current_state(run_id)
+            step = state["steps"][step_id]
         status = "in_progress"
     else:
         try:
@@ -280,12 +309,18 @@ def advance(run_id: str, backend, max_iterations: int = MAX_ITERATIONS, log=prin
             return state
         # `in_progress` covers steps a human has just approved: claimed already, but
         # still needing the agent to do the work.
+        # A step somebody else is holding is not work this driver can move. Leaving it in
+        # the ready set would spin the loop until the iteration cap.
+        elsewhere = sorted(sid for sid, s in state["steps"].items()
+                           if core.claim_is_live(s) and s.get("holder") != HOLDER)
         ready = sorted(sid for sid, s in state["steps"].items()
-                       if s["status"] in ("ready", "in_progress"))
+                       if s["status"] in ("ready", "in_progress") and sid not in elsewhere)
         checks = sorted(sid for sid, s in state["steps"].items()
                         if s["status"] == "awaiting_check")
         if not ready and not checks:
             waiting = sorted(sid for sid, s in state["steps"].items() if s["status"] in HALTED)
+            if elsewhere:
+                log(f"run {run_id}: {len(elsewhere)} step(s) held by another worker: {elsewhere}")
             log(f"run {run_id}: no work left; waiting on a human for {waiting or 'nothing'}")
             return state
         log(f"run {run_id}: driving {len(ready)} step(s), {len(checks)} check(s)")
