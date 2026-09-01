@@ -182,6 +182,17 @@ class Store:
                 raise NotFound("identity binding not found")
             return dict(row)
 
+    def record_step_decision(self, org_id: str, actor_id: str, run_id: str, step_id: str,
+                             decision: str, request_id: str, trace_id: str = "") -> None:
+        """Mirror a workflow-step decision into the operator read model.
+
+        The run log stays the system of record; this is what the console and any later
+        report read, so both halves say the same thing about who decided what."""
+        with self.transaction() as connection:
+            self._append_operational_event(
+                connection, org_id, actor_id, "runtime", "step.decision", "run_step",
+                f"{run_id}/{step_id}", request_id, trace_id, {"decision": decision})
+
     def record_gateway_nonce(self, issuer: str, nonce: str, expires_epoch: int) -> None:
         expires = datetime.fromtimestamp(expires_epoch, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         with self.transaction() as connection:

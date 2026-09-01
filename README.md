@@ -76,8 +76,8 @@ roles, SQLite migrations/recovery, exact single-use human approvals, connector a
 kill-switch and reconciliation controls, protected metrics, and a fail-closed release gate. This
 is not deployment evidence: production identity lifecycle, first-provider OAuth, external review,
 human UAT, production deployment and rollback remain gated. See
-[docs/PRODUCTION-FOUNDATION-VALIDATION-2026-08-06.md](docs/PRODUCTION-FOUNDATION-VALIDATION-2026-08-06.md)
-and [docs/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md](docs/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md).
+[docs/history/PRODUCTION-FOUNDATION-VALIDATION-2026-08-06.md](docs/history/PRODUCTION-FOUNDATION-VALIDATION-2026-08-06.md)
+and [docs/history/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md](docs/history/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md).
 A worked end-to-end run (inbound lead → qualified → routed → gated draft, fully audit-logged)
 lives in [examples/revenue-ops/](examples/revenue-ops/runs/sample-inbound-lead/INDEX.md).
 

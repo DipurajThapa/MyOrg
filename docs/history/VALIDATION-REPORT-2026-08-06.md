@@ -2,7 +2,7 @@
 
 > Historical checkpoint. Its “Blocked” rows describe the state before the production-readiness
 > closure loop. Current implementation and release status are in
-> `docs/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md`; live/human evidence remains blocked.
+> `docs/history/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md`; live/human evidence remains blocked.
 
 Environment: local managed workspace, 2026-08-06  
 Scope: governed project intake, Six Sigma value-stream/customer journey, bidirectional data

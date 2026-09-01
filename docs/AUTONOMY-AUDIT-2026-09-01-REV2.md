@@ -1,6 +1,6 @@
 # Autonomy Audit & Project Tracker — REV2, 2026-09-01 (post-P0 session)
 
-Supersedes `docs/AUTONOMY-BASELINE-2026-09-01.md` (REV1, same day, written before the
+Supersedes `docs/history/AUTONOMY-BASELINE-2026-09-01.md` (REV1, same day, written before the
 executor/planner/scheduler/memory work landed). Every claim is tagged:
 
 - **[V]** Verified by reading code and/or executing it on this host
@@ -280,7 +280,7 @@ marked **(new)**.
 |---|---|---|---|---|---|---|---|
 | HITL-01 | Green/yellow/red gates | ✅ | Red unapprovable by any code path | — | — | — | `request_step():189-191` |
 | HITL-02 | Approval console + briefs | ✅ | 5-line brief, blast-radius ordering | Local, unauthenticated | — | P1 | 20 tests |
-| HITL-04 | Approval UI in Control Center | ⛔ | Intake/UI-state only | Approve/reject surface | API-02 | P1 | `control-center.tsx` |
+| HITL-04 | Approval UI in Control Center | ✅ | The queue screen now reads `GET /v1/decisions` and posts a decision with a required reason. Red steps render as handed back and cannot be actioned. Overview shows the same live counts. The hard-coded mock run and the dead "Preview approve" buttons are gone | Single-operator; no run detail/timeline view yet | — | ~~P1~~ done | 29 tests incl. real HTTP; `module-decisions.sh` |
 | HITL-06 | Approval attributable | 🟡 | Name + reason required, in event chain | Identity not authenticated | PROD-02 | P1 | `decide()` |
 | AUD-01 **(new, was OBS-05 in REV1)** | Audit-log writer | ✅ | `runtime/audit.py` — nine validated fields, hash-chained, fsynced, under a file lock; `verify` and `tail` CLI. Pre-chain lines are sealed by an anchor digest rather than rewritten. The log follows `MYORG_RUNS_DIR`, so a test can never append to the company record | Only gate transitions are wired; connector execution and SLA events still self-report | — | ~~P0~~ done | 14 tests; live run `live-audit` produced 3 chained entries with no agent involved |
 | AUD-02 **(new)** | Gated actions produce a log line (test) | ✅ | `tests/test_audit.py` (14) + `module-audit-log.sh` L7: the module now asserts the runtime *produces* entries and that the chain verifies, not that the skill text mentions logging | — | AUD-01 | ~~P0~~ done | audit-log module 28 → 32 passed / 0 failed |
@@ -324,7 +324,7 @@ marked **(new)**.
 | DEP-07 **(new)** | Scheduler/executor service unit | ⛔ | api/backup/maintenance units | Supervised loop unit + Windows equivalent | LOOP-03 | **P0** | `deploy/` |
 | DOC-07 | `CLAUDE.md` within guardrail | ⛔ | 222 lines / 12,592 B | Trim, or raise the cap deliberately | — | P1 | `core.sh` |
 | DOC-08 **(new)** | Docs state the target vs. today | ⛔ | README/RUNTIME-AUDIT describe HITL as the goal | One line stating the settled autonomy target and that HITL is the current stage | — | P2 | `docs/RUNTIME-AUDIT.md` |
-| API-02 | Run/step read routes | ⛔ | `run_steps` table exists | HTTP exposure | ARCH-06 | P1 | mig 004 |
+| API-02 | Run/step read routes | 🟡 | `GET /v1/decisions` and `POST /v1/decisions/{run}/{step}` serve the human queue, org-scoped, `decision-owner` + human identity required, mirrored into `operational_events` | Full run/step listing and timeline still unexposed | ARCH-06 | P1 | `tests/test_decisions.py` |
 | API-06 | OpenAPI spec | ⛔ | None | Machine-readable contract | — | P2 | — |
 | DEBT-02 **(new)** | Oversized modules | 🟡 | `executor.py` split to 278 | `db.py` 777, `api.py` 411, `company_runtime.py` 374 exceed the 300-line house rule | — | P2 | `wc -l runtime/*.py` |
 | PROD-02 | Production identity | 🚧 | Local HMAC tokens | Managed IdP | — | P1 | ledger OS-7 |

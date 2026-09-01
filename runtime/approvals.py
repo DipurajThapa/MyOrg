@@ -40,6 +40,7 @@ class Decision:
     context: tuple[tuple[str, str], ...] = field(default=())
     brief: Brief | None = None
     held_reason: str = ""
+    org_id: str = ""
     unblocks: int = 0
     depth: int = 0
     waiting_since: str = ""
@@ -116,13 +117,18 @@ def sequence(decisions: list[Decision]) -> list[Decision]:
         0 if not d.actionable else 1, d.depth, -d.unblocks, d.run_id, d.step_id))
 
 
-def pending(run_id: str | None = None) -> list[Decision]:
-    """Every decision waiting on a human, in the order they should be taken."""
+def pending(run_id: str | None = None, org_id: str | None = None) -> list[Decision]:
+    """Every decision waiting on a human, in the order they should be taken.
+
+    `org_id` scopes the queue to one organization: a decision belongs to whoever owns the
+    run, and nobody else should even see that it exists."""
     decisions = []
     for identifier in ([run_id] if run_id else run_ids()):
         try:
             state = current_state(identifier)
         except SystemExit:
+            continue
+        if org_id is not None and state.get("org_id") != org_id:
             continue
         for step_id, step in sorted(state["steps"].items()):
             if step["status"] not in WAITING:
@@ -134,6 +140,7 @@ def pending(run_id: str | None = None) -> list[Decision]:
                 context=upstream_context(state, step),
                 brief=load_brief(identifier, step_id),
                 held_reason=step.get("held_reason", ""),
+                org_id=state.get("org_id", ""),
                 unblocks=downstream_count(state, step_id),
                 depth=depth_of(state, step_id),
                 waiting_since=state.get("ts", "")))

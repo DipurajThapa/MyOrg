@@ -275,3 +275,16 @@ h2 { font-size: 20px; letter-spacing: -.025em; margin-bottom: 0; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
 }
+
+/* Live decision queue (HITL-04). A red gate is not a warning, it is a stop: it uses a
+   distinct colour from "awaiting you" so the two are never confused at a glance. */
+.step-dot.stop { background: #fdecec; border-color: #c0392b; color: #8c2318; }
+button.queue-step { width: 100%; text-align: left; background: none; font: inherit; color: inherit; cursor: pointer; border-left: 2px solid transparent; }
+button.queue-step:hover { background: var(--surface-soft, #f7f9f8); }
+button.queue-step.selected { border-left-color: var(--amber, #d99400); background: var(--surface-soft, #f7f9f8); }
+button.queue-step:focus-visible { outline: 2px solid var(--amber, #d99400); outline-offset: -2px; }
+.decision-brief { white-space: pre-wrap; font-family: var(--font-geist-mono); font-size: 10px; line-height: 1.7; background: var(--surface-soft, #f7f9f8); border: 1px solid var(--line); padding: 12px; margin: 0 0 22px; overflow-x: auto; }
+.decision-reason { display: flex; flex-direction: column; gap: 6px; margin: 0 0 14px; }
+.decision-reason input { width: 100%; padding: 9px 10px; border: 1px solid var(--line); background: #fff; font: inherit; font-size: 11px; }
+.decision-reason input:focus-visible { outline: 2px solid var(--amber, #d99400); outline-offset: -1px; }
+.decision-actions button[disabled] { opacity: 0.45; cursor: not-allowed; }

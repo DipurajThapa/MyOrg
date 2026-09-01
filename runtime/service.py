@@ -2,9 +2,12 @@
 """Organization-scoped application service with human-held approval authority."""
 from __future__ import annotations
 
+import argparse
+import io
 import json
 import re
 import secrets
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -35,6 +38,12 @@ def _require(principal: Principal, *roles: str) -> None:
         raise Forbidden("role is not authorized for this operation")
 
 
+def _quietly(command, arguments) -> None:
+    """Runtime commands print their new status; the API answers in JSON instead."""
+    with redirect_stdout(io.StringIO()):
+        command(arguments)
+
+
 def _policy() -> dict[str, str]:
     data = json.loads((ROOT / "runtime" / "policy.json").read_text(encoding="utf-8"))
     return data["actions"]
@@ -61,6 +70,65 @@ class MyOrgService:
             raise ServiceError("goal must be 1..500 characters")
         return self.store.create_run(principal.org_id, body["id"], body["workflow_id"], body["workflow_revision"],
                                      body["goal"].strip(), body["data_class"], principal.actor_id, request_id)
+
+    # --- workflow-step decisions ------------------------------------------------
+    # These are the yellow and red gates of a run, which live in the append-only run log.
+    # They are a different thing from `request_approval` below, which governs a single
+    # connector write. Both end at a named human; only this one can move a run.
+
+    def pending_decisions(self, principal: Principal) -> list[dict]:
+        """Everything in this organization waiting on a person, worst first."""
+        from runtime import approvals
+        return [{"run_id": d.run_id, "step": d.step_id, "status": d.status,
+                 "owner": d.owner, "action": d.action, "risk": d.risk, "goal": d.goal,
+                 "workflow_id": d.workflow_id, "reason": d.reason, "impact": d.impact,
+                 "actionable": d.actionable, "unblocks": d.unblocks, "depth": d.depth,
+                 "waiting_since": d.waiting_since, "held_reason": d.held_reason,
+                 "context": [{"step": step, "excerpt": text} for step, text in d.context],
+                 "brief": d.brief.as_text() if d.brief else ""}
+                for d in approvals.pending(org_id=principal.org_id)]
+
+    def decide_step(self, principal: Principal, run_id: str, step_id: str,
+                    body: dict, request_id: str) -> dict:
+        """Approve or reject one parked step, as a named human, with a stated reason."""
+        _require(principal, "decision-owner")
+        if principal.actor_type != "human":
+            raise Forbidden("decisions require a registered human identity")
+        if set(body) != {"decision", "reason"} or body["decision"] not in {"approve", "reject"}:
+            raise ServiceError("decision must be approve/reject with a reason")
+        reason = str(body["reason"]).strip()
+        if not 1 <= len(reason) <= 200 or not reason.isprintable():
+            raise ServiceError("reason must be 1..200 printable characters on one line")
+        if not ID_RE.fullmatch(str(run_id)) or not ID_RE.fullmatch(str(step_id)):
+            raise ServiceError("invalid run or step id")
+
+        from runtime import company_runtime as core
+        try:
+            state = core.read_events(run_id)[-1]
+        except SystemExit as error:
+            raise ServiceError(f"unknown run: {run_id}") from error
+        if state.get("org_id") != principal.org_id:
+            # Same answer as a run that does not exist: never confirm another org's runs.
+            raise ServiceError(f"unknown run: {run_id}")
+        step = state["steps"].get(step_id)
+        if not step:
+            raise ServiceError(f"unknown step: {step_id}")
+        if step["status"] != "awaiting_approval":
+            raise ServiceError(
+                f"{step_id} is {step['status']}, which is not a decision anyone can take")
+
+        who = principal.display_name or principal.actor_id
+        command = core.approve if body["decision"] == "approve" else core.reject
+        arguments = argparse.Namespace(run_id=run_id, step=step_id, approver=who,
+                                       approval_ref=reason, request_id=request_id)
+        try:
+            _quietly(command, arguments)
+        except SystemExit as error:
+            raise ServiceError(str(error)) from error
+        self.store.record_step_decision(principal.org_id, principal.actor_id, run_id,
+                                        step_id, body["decision"], request_id)
+        return {"run_id": run_id, "step": step_id, "decision": body["decision"],
+                "status": core.read_events(run_id)[-1]["steps"][step_id]["status"]}
 
     def request_approval(self, principal: Principal, body: dict, request_id: str) -> dict:
         _require(principal, "maker", "chief-of-staff", "system-admin")

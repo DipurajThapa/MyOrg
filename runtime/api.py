@@ -246,6 +246,17 @@ class MyOrgHandler(BaseHTTPRequestHandler):
                     raise RouteNotFound()
                 self._send(HTTPStatus.OK, result)
                 return
+            if method == "GET" and path == "/v1/decisions":
+                self._send(HTTPStatus.OK, self.server.service.pending_decisions(principal))
+                return
+            if method == "POST" and len(parts) == 4 and parts[:2] == ["v1", "decisions"]:
+                run_id, step_id = parts[2], parts[3]
+                if not RESOURCE_ID_RE.fullmatch(run_id) or not RESOURCE_ID_RE.fullmatch(step_id):
+                    raise BadRequest("invalid run or step id")
+                result = self.server.service.decide_step(principal, run_id, step_id,
+                                                         self._json(), self._request_id())
+                self._send(HTTPStatus.OK, result)
+                return
             if method == "POST" and path == "/v1/approvals":
                 result = self.server.service.request_approval(principal, self._json(), self._request_id())
                 self._send(HTTPStatus.CREATED, result)

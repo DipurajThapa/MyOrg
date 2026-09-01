@@ -159,7 +159,7 @@ and non-color-only state cues are release requirements, not polish.
 
 **Release decision: BLOCKED.** Local development for the three bounded capabilities is complete,
 but the product must not be described as production-ready while any external or human evidence
-gate above is Blocked or Not run. See `docs/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md`.
+gate above is Blocked or Not run. See `docs/history/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md`.
 
 ## 8. Next loop and stop conditions
 

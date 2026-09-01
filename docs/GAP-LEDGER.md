@@ -1,5 +1,10 @@
 # Production-Readiness Gap Ledger
 
+> **Superseded for status.** This ledger records the production-readiness gaps as they
+> stood on 2026-08-06. The current, evidence-checked status of every item lives in
+> [AUTONOMY-AUDIT-2026-09-01-REV2.md](AUTONOMY-AUDIT-2026-09-01-REV2.md). Kept because the
+> acceptance suite checks its dispositions and because the reasoning is still sound.
+
 One row per gap from the 2026-07-14 production evaluation, each with its disposition and
 evidence. Statuses: **BUILT** (capability exists, test-covered) · **DOCUMENTED** (governed by
 written policy/playbook — no build needed or possible) · **BLOCKED-ON-HUMAN** (requires an
@@ -53,8 +58,8 @@ its own approval). Maintained by the Chief of Staff; update when a disposition c
 | OS-9 | No multi-directional internal information exchange | **BUILT — SECOND INCREMENT**: typed path+hash envelopes, authorized participants, reverse-direction replies, and adjacent-DAG handoffs; raw/restricted payloads excluded | `runtime/company_runtime.py`, `docs/EXCHANGE-MAKER-CHECKER-AUDIT.md` |
 | OS-10 | No maker-checker quality gate | **BUILT — AUTHENTICATED LOCAL CONTROL**: immutable submissions plus DB-bound maker/human decision owner, exact action hash, expiry, single-use execution and atomic receipt; real-IdP UAT pending | `runtime/workflows/maker-checker-gold-run.json`, `runtime/service.py`, `tests/test_production_foundation.py` |
 | OS-11 | No canonical project intake, value stream, or customer journey | **BUILT — THIRD INCREMENT**: six-stage intake pack, SIPOC/current/future map, data contract, risk, traceability, test and release gates | `docs/PROJECT-INTAKE-AND-PRODUCTION-LOOP.md`, `templates/project-intake/`, `tests/module-project-intake.sh` |
-| OS-12 | No usable operator surface | **PARTIAL — SIGNED-IN READ-ONLY RELEASE CANDIDATE**: governed intake/work/approval/flow views, fail-closed authentication, security headers and accessibility structure pass local checks; API write integration and human accessibility UAT remain blocked | MyOrg Control Center Site, `docs/SECURITY-PRIVACY-ACCESSIBILITY-REVIEW-2026-08-06.md` |
-| OS-13 | No production application foundation | **LOCAL CONTROL FOUNDATION COMPLETE / RELEASE BLOCKED**: signed UI identity binding, org/user durable intake and preferences, three SQLite migrations, two audit chains, recovery/timers, connector authorization/kill-switch/reconciliation, protected metrics/alerts, CI/CodeQL/SBOM/scan and a fail-closed release record are test-covered. Production identity lifecycle, provider OAuth/adapter, external/human review, live monitoring, UAT, deploy and rollback evidence remain unrun | `runtime/`, `.github/workflows/ci.yml`, `docs/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md` |
+| OS-12 | No usable operator surface | **PARTIAL — SIGNED-IN READ-ONLY RELEASE CANDIDATE**: governed intake/work/approval/flow views, fail-closed authentication, security headers and accessibility structure pass local checks; API write integration and human accessibility UAT remain blocked | MyOrg Control Center Site, `docs/history/SECURITY-PRIVACY-ACCESSIBILITY-REVIEW-2026-08-06.md` |
+| OS-13 | No production application foundation | **LOCAL CONTROL FOUNDATION COMPLETE / RELEASE BLOCKED**: signed UI identity binding, org/user durable intake and preferences, three SQLite migrations, two audit chains, recovery/timers, connector authorization/kill-switch/reconciliation, protected metrics/alerts, CI/CodeQL/SBOM/scan and a fail-closed release record are test-covered. Production identity lifecycle, provider OAuth/adapter, external/human review, live monitoring, UAT, deploy and rollback evidence remain unrun | `runtime/`, `.github/workflows/ci.yml`, `docs/history/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md` |
 
 ## Minimal-agents check (sprawl control)
 

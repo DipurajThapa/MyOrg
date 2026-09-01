@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type View = "overview" | "intake" | "queue" | "flow";
 type FlowMode = "current" | "future";
@@ -28,6 +28,27 @@ type ProjectIntake = {
   documents: Record<DocumentKey, boolean>;
   status: "draft" | "ready";
   revision: number;
+};
+
+/** One parked step waiting on a person. Mirrors GET /v1/decisions exactly. */
+type Decision = {
+  run_id: string;
+  step: string;
+  status: string;
+  owner: string;
+  action: string;
+  risk: "green" | "yellow" | "red";
+  goal: string;
+  workflow_id: string;
+  reason: string;
+  impact: string;
+  actionable: boolean;
+  unblocks: number;
+  depth: number;
+  waiting_since: string;
+  held_reason: string;
+  context: Array<{ step: string; excerpt: string }>;
+  brief: string;
 };
 
 type DocumentKey = "problem_statement" | "charter" | "sop" | "control_plan" | "uat" | "release_checklist";
@@ -63,12 +84,6 @@ const intakeStages = [
   ["03", "Specify", "Requirements, data contract"],
   ["04", "Control", "Risk, policy, rollback"],
   ["05", "Validate", "Tests, UAT, release gate"],
-];
-
-const workSteps = [
-  { label: "Frame goal", owner: "Chief of Staff", status: "Completed", tone: "done" },
-  { label: "Produce output", owner: "CTO · maker", status: "Checked", tone: "done" },
-  { label: "Release output", owner: "Human owner", status: "Awaiting approval", tone: "wait" },
 ];
 
 const blockers = [
@@ -115,6 +130,11 @@ export default function ControlCenter({
   const [hydrated, setHydrated] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<"loading" | "saved" | "saving" | "error">("loading");
   const [notice, setNotice] = useState("");
+  const [decisions, setDecisions] = useState<Decision[] | null>(null);
+  const [decisionsError, setDecisionsError] = useState("");
+  const [selectedDecision, setSelectedDecision] = useState<string | null>(null);
+  const [decisionReason, setDecisionReason] = useState("");
+  const [deciding, setDeciding] = useState(false);
   const uiRevision = useRef(0);
   const mainRef = useRef<HTMLElement>(null);
   const initialView = useRef(true);
@@ -270,10 +290,68 @@ export default function ControlCenter({
     }
   }
 
-  function previewDecision(decision: string) {
-    setNotice(
-      `${decision} was previewed only. The release state was not changed because this UI is not connected to the governed runtime.`,
-    );
+  const visibleDecisions = useMemo(() => {
+    const queue = (decisions ?? []).filter((item) => queueFilter === "all" || item.actionable);
+    // The runtime already returns them worst-first; oldest/newest is the operator's choice.
+    return queueSort === "updated_asc"
+      ? [...queue].sort((a, b) => a.waiting_since.localeCompare(b.waiting_since))
+      : [...queue].sort((a, b) => b.waiting_since.localeCompare(a.waiting_since));
+  }, [decisions, queueFilter, queueSort]);
+
+  const chosenDecision = useMemo(
+    () => visibleDecisions.find((item) => `${item.run_id}/${item.step}` === selectedDecision) ?? null,
+    [visibleDecisions, selectedDecision],
+  );
+
+  const loadDecisions = useCallback(async () => {
+    // Nothing is set before the first await on purpose: an effect must not change state
+    // synchronously, or React re-renders before the fetch has said anything.
+    try {
+      const queue = await runtimeRequest<Decision[]>("/v1/decisions");
+      setDecisions(queue);
+      setDecisionsError("");
+      setSelectedDecision((current) => {
+        const stillThere = queue.some((d) => `${d.run_id}/${d.step}` === current);
+        return stillThere ? current : (queue[0] ? `${queue[0].run_id}/${queue[0].step}` : null);
+      });
+    } catch (error) {
+      setDecisions([]);
+      setDecisionsError(error instanceof Error ? error.message : "The decision queue could not be read");
+    }
+  }, []);
+
+  // The queue is only fetched when it is on screen, and again after every decision, so
+  // what is shown is what the runtime currently says -- never a cached guess.
+  useEffect(() => {
+    if (!hydrated || !isSignedIn || (view !== "queue" && view !== "overview")) return;
+    let active = true;
+    (async () => {
+      if (!active) return;
+      await loadDecisions();
+    })();
+    return () => { active = false; };
+  }, [hydrated, isSignedIn, view, loadDecisions]);
+
+  async function decide(decision: Decision, verdict: "approve" | "reject") {
+    const reason = decisionReason.trim();
+    if (!reason) {
+      setNotice("Say why. Every decision is recorded against your name and needs a reason.");
+      return;
+    }
+    setDeciding(true);
+    try {
+      const result = await runtimeRequest<{ status: string }>(
+        `/v1/decisions/${decision.run_id}/${decision.step}`,
+        { method: "POST", body: JSON.stringify({ decision: verdict, reason }) },
+      );
+      setNotice(`${decision.step} is now ${result.status.replace(/_/g, " ")}. Recorded against your name in the audit log.`);
+      setDecisionReason("");
+      await loadDecisions();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "The decision could not be recorded");
+    } finally {
+      setDeciding(false);
+    }
   }
 
   return (
@@ -401,22 +479,28 @@ export default function ControlCenter({
               <section className="content-grid">
                 <article className="panel work-panel">
                   <div className="panel-heading">
-                    <div><p className="eyebrow">WORK IN MOTION</p><h2>Maker-checker validation</h2></div>
-                    <button type="button" className="text-action" onClick={() => changeView("queue")}>Open run →</button>
+                    <div>
+                      <p className="eyebrow">WAITING ON YOU</p>
+                      <h2>{decisions === null ? "Reading…" : decisions.length === 0 ? "Nothing needs you" : `${decisions.length} decision${decisions.length === 1 ? "" : "s"}`}</h2>
+                    </div>
+                    <button type="button" className="text-action" onClick={() => changeView("queue")}>Open queue →</button>
                   </div>
                   <div className="run-meta">
-                    <span>RUN · maker-checker-validation</span>
-                    <span>13 / 24 cycles</span>
-                    <span>4 messages</span>
+                    <span>{(decisions ?? []).filter((item) => item.actionable).length} you can decide</span>
+                    <span>{(decisions ?? []).filter((item) => !item.actionable).length} handed back</span>
+                    <span>{(decisions ?? []).reduce((total, item) => total + item.unblocks, 0)} step(s) blocked</span>
                   </div>
                   <div className="step-track">
-                    {workSteps.map((step, index) => (
-                      <div className="step-item" key={step.label}>
-                        <div className={`step-dot ${step.tone}`}>{index + 1}</div>
-                        <div><strong>{step.label}</strong><small>{step.owner}</small></div>
-                        <StatusPill tone={step.tone}>{step.status}</StatusPill>
+                    {(decisions ?? []).slice(0, 3).map((item, index) => (
+                      <div className="step-item" key={`${item.run_id}/${item.step}`}>
+                        <div className={`step-dot ${item.risk === "red" ? "stop" : "wait"}`}>{index + 1}</div>
+                        <div><strong>{item.action} — {item.step}</strong><small>{item.owner} · {item.run_id}</small></div>
+                        <StatusPill tone={item.risk === "red" ? "stop" : "wait"}>{item.risk === "red" ? "Handed back" : "Awaiting you"}</StatusPill>
                       </div>
                     ))}
+                    {decisions !== null && decisions.length === 0 && (
+                      <p className="safety-copy">Work that reaches a yellow or red gate will show up here.</p>
+                    )}
                   </div>
                 </article>
 
@@ -541,54 +625,109 @@ export default function ControlCenter({
               </section>
 
               <section className="queue-layout">
-                <article className="panel run-detail">
-                  <div className="run-title-row">
-                    <div><span className="mono-label">RUN-0001 · INTERNAL VALIDATION</span><h2>Maker-checker gold run</h2></div>
-                    <StatusPill tone="wait">Awaiting human</StatusPill>
-                  </div>
-                  <div className="run-meta prominent"><span>REV · a84f…913c</span><span>13 / 24 cycles</span><span>Last event · approval requested</span></div>
-                  <div className="queue-steps">
-                    {workSteps.map((step, index) => (
-                      <div className="queue-step" key={step.label}>
-                        <div className={`step-dot ${step.tone}`}>{index + 1}</div>
-                        <div className="queue-step-copy"><strong>{step.label}</strong><small>{step.owner}</small></div>
-                        <div className="queue-step-evidence"><span>{index === 1 ? "1 submission · 1 check" : index === 2 ? "publish · yellow" : "evidence linked"}</span><StatusPill tone={step.tone}>{step.status}</StatusPill></div>
-                      </div>
-                    ))}
-                  </div>
+                {decisions === null && <article className="panel run-detail"><p>Reading the queue…</p></article>}
 
-                  <div className="exchange-trail">
-                    <div className="section-label"><span>EXCHANGE TRAIL</span><span>references + hashes only</span></div>
-                    {[
-                      ["QUESTION", "CTO → COO", "Clarify acceptance evidence", "internal"],
-                      ["ANSWER", "COO → CTO", "Acceptance evidence clarified", "internal"],
-                      ["DECISION", "COO → CTO", "Submission approved unchanged", "internal"],
-                      ["HANDOFF", "CTO → Chief of Staff", "Checked output ready for release", "internal"],
-                    ].map(([kind, route, subject, classification]) => (
-                      <div className="message-row" key={`${kind}-${subject}`}>
-                        <span className="message-kind">{kind}</span><strong>{route}</strong><p>{subject}</p><small>{classification}</small>
-                      </div>
-                    ))}
-                  </div>
-                </article>
+                {decisions !== null && decisionsError && (
+                  <article className="panel run-detail">
+                    <h2>The queue could not be read</h2>
+                    <p>{decisionsError}</p>
+                    <div className="decision-actions">
+                      <button type="button" className="secondary-action" onClick={() => void loadDecisions()}>Try again</button>
+                    </div>
+                  </article>
+                )}
 
-                <aside className="panel approval-card">
-                  <div className="approval-stripe" />
-                  <p className="eyebrow">HUMAN DECISION / YELLOW</p>
-                  <h2>Release checked output</h2>
-                  <p>The independent quality check passed. This separate decision would publish the artifact, so no agent can complete it.</p>
-                  <dl>
-                    <div><dt>Proposed action</dt><dd>Publish</dd></div>
-                    <div><dt>Maker</dt><dd>CTO · Engineering</dd></div>
-                    <div><dt>Checker</dt><dd>COO · Operations</dd></div>
-                    <div><dt>Evidence</dt><dd>path + SHA-256</dd></div>
-                  </dl>
-                  <div className="decision-actions">
-                    <button type="button" className="primary-action" onClick={() => previewDecision("Approval")}>Preview approve</button>
-                    <button type="button" className="secondary-action" onClick={() => previewDecision("Return")}>Preview return</button>
-                  </div>
-                  <small className="safety-copy">Project and view writes are live. This release action remains deliberately disabled until an exact runtime approval is selected and verified.</small>
-                </aside>
+                {decisions !== null && !decisionsError && visibleDecisions.length === 0 && (
+                  <article className="panel run-detail">
+                    <div className="run-title-row"><div><span className="mono-label">NOTHING WAITING</span><h2>Nothing needs you</h2></div></div>
+                    <p>No run is parked at a gate right now. Work that reaches a yellow or red step will appear here.</p>
+                    <div className="decision-actions">
+                      <button type="button" className="secondary-action" onClick={() => void loadDecisions()}>Refresh</button>
+                    </div>
+                  </article>
+                )}
+
+                {decisions !== null && !decisionsError && visibleDecisions.length > 0 && (
+                  <article className="panel run-detail">
+                    <div className="run-title-row">
+                      <div><span className="mono-label">{visibleDecisions.length} WAITING · WORST FIRST</span><h2>What needs a person</h2></div>
+                      <button type="button" className="text-action" onClick={() => void loadDecisions()}>Refresh</button>
+                    </div>
+                    <div className="queue-steps">
+                      {visibleDecisions.map((item) => {
+                        const key = `${item.run_id}/${item.step}`;
+                        return (
+                          <button
+                            type="button"
+                            key={key}
+                            className={`queue-step${selectedDecision === key ? " selected" : ""}`}
+                            aria-pressed={selectedDecision === key}
+                            onClick={() => { setSelectedDecision(key); setDecisionReason(""); }}
+                          >
+                            <div className={`step-dot ${item.risk === "red" ? "stop" : "wait"}`}>{item.risk === "red" ? "!" : "?"}</div>
+                            <div className="queue-step-copy"><strong>{item.action} — {item.step}</strong><small>{item.owner} · {item.run_id}</small></div>
+                            <div className="queue-step-evidence">
+                              <span>{item.unblocks > 0 ? `${item.unblocks} step(s) blocked` : "nothing blocked"}</span>
+                              <StatusPill tone={item.risk === "red" ? "stop" : "wait"}>{item.risk === "red" ? "Handed back" : "Awaiting you"}</StatusPill>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </article>
+                )}
+
+                {chosenDecision && (
+                  <aside className="panel approval-card">
+                    <div className="approval-stripe" />
+                    <p className="eyebrow">HUMAN DECISION / {chosenDecision.risk.toUpperCase()}</p>
+                    <h2>{chosenDecision.action} — {chosenDecision.step}</h2>
+                    <p>{chosenDecision.reason}</p>
+                    {chosenDecision.held_reason && <p className="safety-copy">{chosenDecision.held_reason}</p>}
+                    <dl>
+                      <div><dt>Goal</dt><dd>{chosenDecision.goal}</dd></div>
+                      <div><dt>Run</dt><dd>{chosenDecision.run_id}</dd></div>
+                      <div><dt>Owner</dt><dd>{chosenDecision.owner}</dd></div>
+                      <div><dt>If you wait</dt><dd>{chosenDecision.impact}</dd></div>
+                    </dl>
+                    {chosenDecision.brief && <pre className="decision-brief">{chosenDecision.brief}</pre>}
+                    {chosenDecision.context.length > 0 && (
+                      <div className="exchange-trail">
+                        <div className="section-label"><span>WHAT CAME BEFORE</span><span>from the run log</span></div>
+                        {chosenDecision.context.map((item) => (
+                          <div className="message-row" key={item.step}>
+                            <span className="message-kind">{item.step}</span><p>{item.excerpt}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {chosenDecision.actionable ? (
+                      <>
+                        <label className="sort-control decision-reason">
+                          <span>Why (recorded against your name)</span>
+                          <input
+                            type="text"
+                            value={decisionReason}
+                            maxLength={200}
+                            placeholder="e.g. checked the copy, safe to publish"
+                            onChange={(event) => setDecisionReason(event.target.value)}
+                          />
+                        </label>
+                        <div className="decision-actions">
+                          <button type="button" className="primary-action" disabled={deciding || !decisionReason.trim()} onClick={() => void decide(chosenDecision, "approve")}>
+                            {deciding ? "Recording…" : "Approve"}
+                          </button>
+                          <button type="button" className="secondary-action" disabled={deciding || !decisionReason.trim()} onClick={() => void decide(chosenDecision, "reject")}>
+                            Reject
+                          </button>
+                        </div>
+                        <small className="safety-copy">Approving lets the agent carry on. Rejecting stops the run. Either way the runtime writes who decided, when, and why.</small>
+                      </>
+                    ) : (
+                      <small className="safety-copy">This is a red action. It has been handed back to a person to perform outside the system — no code path here can approve it.</small>
+                    )}
+                  </aside>
+                )}
               </section>
             </>
           )}

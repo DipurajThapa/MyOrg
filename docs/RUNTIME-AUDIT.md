@@ -1,5 +1,10 @@
 # Controlled Runtime Audit and First Increment
 
+> **Superseded for scope.** Its exclusions ("no model calls, no dispatch, no scheduler")
+> describe the runtime before 2026-09-01. The executor, planner, scheduler, grading and
+> ownership work has since landed; see
+> [AUTONOMY-AUDIT-2026-09-01-REV2.md](AUTONOMY-AUDIT-2026-09-01-REV2.md) for what is true now.
+
 Status: **FIRST INCREMENT VALIDATED; SECOND INTERNAL-EXCHANGE INCREMENT IMPLEMENTED**
 
 ## Outcome and scope
