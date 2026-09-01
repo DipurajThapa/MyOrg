@@ -152,6 +152,36 @@ extension path once, generic over both. **This is the leverage point: A-01 and A
 be designed together or A-01 will need its own resume path a month later.**
 **Priority: P1, and coupled to A-01.**
 
+### A-09 — Shrink the per-dispatch context floor *(new — found by running A-01's experiment)*
+
+**Problem.** Every dispatch pays ~$0.38–$0.44 before doing any work, and roughly 85% of that
+is the *operator's global Claude Code install* — plugins, skills, global config — not this
+product. **[V]**, four measured invocations, §6.
+
+**Why this outranks a ceiling.** A-01 stops runaway spend. A-09 reduces the cost of *every
+run the company will ever do*, including the ones nobody would want stopped. A ceiling
+divides; this multiplies. If a trimmed dispatch profile halves the floor, it is worth more
+than the ceiling and it makes the ceiling's numbers less painful.
+
+**Mechanism, in order of increasing commitment:**
+1. **Measure first.** Establish what a real step dispatch costs today, then what it costs
+   with `--disable-slash-commands` and a minimal `--settings`. Free to try, reversible.
+2. **A dedicated dispatch profile.** The runtime already controls the whole command line in
+   `backends.py`; a dispatched department needs its agent brief and its scoped tools, not
+   the operator's personal plugin set.
+3. **`--bare` with an API key.** Measured to skip hooks, LSP and plugins entirely — but it
+   requires `ANTHROPIC_API_KEY` and refuses the current OAuth credentials (**[V]**: it
+   answered `Not logged in`). That makes it a deployment decision about how the *service*
+   authenticates, not a flag flip, and it belongs with the DEP-07 unit rather than here.
+
+**Risks.** Trimming context could remove something an agent silently depended on — a skill
+it was reaching for, a global instruction that shaped its output. The mitigation is
+measurement, not confidence: compare a real dispatch's *output quality*, not just its cost,
+before and after. The existing acceptance grader is the instrument for that.
+
+**Priority: P0, alongside A-01.** They are the same conversation about cost from opposite
+ends, and A-09's measurement work also produces the per-dispatch spread A-01 still needs.
+
 ### A-06 — Executor mutations are replay-safe (WF-13)
 
 **Problem.** `request_id()` mints a uuid per call, so WF-04's idempotency can never fire on
@@ -236,15 +266,49 @@ which the run log records — old runs keep their old ids; nothing reads the for
 
 ## 6. Validation required before implementation
 
-**A-01 — one experiment gates the entire design.**
-Does `claude -p` report token usage in a form the backend can capture? Run it with
-`--output-format json` and inspect. **If yes**, the design in §4 stands. **If no**, A-01
-becomes "count calls and cap calls", which is weaker, cheaper, and needs its own decision.
-Nothing should be built before this is answered — it is a ten-minute check that determines
-whether the feature is worth building at all.
+**A-01 — the gating experiment has been run. [V]**
 
-Also required: measure real per-step cost across the existing gold runs to set a default
-ceiling from evidence rather than a guess.
+Measured on this host, `claude -p "Say the single word: ping" --output-format json`,
+four invocations:
+
+| Run | Cost | cache_create | cache_read | Output tokens |
+|---|---|---|---|---|
+| First, in repo | **$0.6971** | 69,698 | 0 | 4 |
+| Second, in repo | **$0.4405** | 42,791 | 24,952 | 4 |
+| Third, in repo | **$0.4406** | 42,797 | 24,952 | 4 |
+| Fourth, outside the repo | **$0.3804** | 36,781 | 24,952 | 4 |
+
+**Answer: yes, and better than the design assumed.** The CLI reports `total_cost_usd`
+directly, alongside a full `usage` breakdown and per-model detail. **A-01 needs no pricing
+table and no token-to-money conversion** — record the dollar figure the CLI already
+computes. That removes the largest piece of work from §4.
+
+**But the numbers found something more important than the answer.** Four output tokens of
+actual work cost **$0.44**. The cost is not the work; it is the ~43k tokens of context
+re-created on every invocation. Three consequences:
+
+1. **There is a hard floor of roughly $0.38–$0.44 per dispatch**, independent of what the
+   step does. A run's cost is therefore driven by *how many times it dispatches*, not by how
+   hard the work is. A default ceiling should be expressed in dispatches × floor, not
+   guessed in dollars.
+2. **Only ~$0.06 of that floor is this repository.** Running the same prompt outside the
+   project cost $0.38 against $0.44 — so the repo's own `CLAUDE.md` is a small part. The
+   rest is the operator's *global* Claude Code install: plugins, skills, global config.
+   **The dominant cost of running this company is a property of the machine it runs on, not
+   of the product.**
+3. **The real-model end-to-end run is now costable [I].** It made roughly nine model calls
+   (one plan, two step dispatches, three retries of one step, and their grading passes) —
+   about **$4 for one triggered run that produced nothing**, because no CRM was authorized.
+   At the current `MAX_QUEUED_TRIGGERS = 50`, a single burst of webhooks is on the order of
+   **$200**. That is the concrete number that justifies A-01, and it was previously invisible.
+
+**A default ceiling set from this evidence:** ~$5 per run and ~$50 per org per day would
+have caught the e2e run's retry loop at the third attempt and capped a webhook burst at
+about a tenth of its worst case. Both should be configurable; neither should be absent.
+
+**Still required before building:** measure a *real* step dispatch (a full agent brief and
+upstream evidence, not a four-word prompt) to learn how far above the floor real work sits.
+The floor is now known; the spread is not.
 
 **A-05.** Prove the current behaviour first: a run at `blocked_cycle_limit`, extended, and
 resumed *without re-running completed steps*. The invariant to protect is that extension
@@ -278,6 +342,7 @@ validation (§6) has passed.
 | **A-05** | Budget extension, generic over cycles and cost | `blocked_cycle_limit` is terminal, strands work, silent re-drive | Probe P3 **[V]** | Removes a dead end; prevents A-01 duplicating it | — | Two budgets, one vocabulary | Extension must not re-dispatch finished steps | **P1** | Proposed — design with A-01 |
 | **A-06** | `request_id` from (run, step, attempt) | WF-04 replay protection unreachable on the autonomous path | Probe P6 **[V]** | Closes a double-spend leak | — | Collision across attempts | Crash-and-resweep produces one dispatch | **P1** | Proposed — ready |
 | **A-04** | Run retrospective → memory → planner recall | Run N+1 is exactly as good as run N | `propose_lesson` is the only runtime writer **[V-static]** | Compounding; execution → improvement | Memory recall quality | Teaches the planner to be confidently wrong | Recall precision at 50 entries | **P1** | Proposed — validate recall first |
+| **A-09** | Shrink the per-dispatch context floor | ~85% of every dispatch's cost is the operator's global plugin/skill install, not the work | Measured: $0.44 in repo vs $0.38 outside vs 4 output tokens **[V]** | **Larger than A-01's.** Cuts the unit cost of every step the company ever runs | — | `--bare` needs `ANTHROPIC_API_KEY`, not the current OAuth login **[V]** | Measure a real dispatch under a trimmed profile; confirm the agent still performs | **P0, with A-01** | Proposed — new, from the A-01 experiment |
 | **A-03** | Non-model validation for one action class | Three checks, one model family | VAL-06 **[V-static]** | Verifies the quality claim | **TOOL-04** | Scope creep into a rules engine | Needs real data to reconcile against | P1 | Blocked |
 | **A-02** | SLA clock and breach event | Runtime has no notion of a deadline | `lead-response` SLA is prose **[V-static]** | Mostly captured by OBS-08 | HOOK-03 | Duplicates OBS-08 alerting | Evidence the alert is insufficient | P2 | Deferred |
 | **A-07** | Document the two approval concepts | `decide_step` vs `decide_approval` are distinct and look alike | `service.py:94,157` **[V-static]** | Prevents a whole class of misuse | — | None | — | P2 | Proposed — docs only |
@@ -288,19 +353,26 @@ validation (§6) has passed.
 ## 8. Dependencies and suggested implementation order
 
 ```
-  [validate] does claude -p report token usage?
+  [validated ✓] claude -p reports total_cost_usd directly -- no pricing table needed
        │
-       ├── yes ──► A-06 (replay-safe ids)          cheap, independent, do first
-       │             │
-       │             └──► A-01 (cost ceiling) ──┬── A-05 (budget extension)
-       │                                        └── OBS-08 spend gauge + alert
+       ├──► A-09 (measure a real dispatch; trim the profile)   do this first: its
+       │        │                                              measurement is also the
+       │        │                                              input A-01 still needs
+       │        └──► informs A-01's default ceiling
        │
-       └── no  ──► re-scope A-01 as a call cap; A-05 still stands on its own
-
-  A-04 (retrospective) ── validate recall precision first ── independent of the above
-  A-03 (non-model validation) ── blocked on TOOL-04 (a human authorizing a provider)
-  A-07, A-08 ── documentation and a decision; no code
+       ├──► A-06 (replay-safe ids)         cheap, independent
+       │        │
+       │        └──► A-01 (cost ceiling, record total_cost_usd) ──┬── A-05 (budget extension)
+       │                                                          └── OBS-08 spend gauge + alert
+       │
+       ├──► A-04 (retrospective) ── validate recall precision first ── independent
+       ├──► A-03 (non-model validation) ── blocked on TOOL-04 (a human authorizing a provider)
+       └──► A-07, A-08 ── documentation and a decision; no code
 ```
+
+**Do A-09's measurement before A-01's code.** It costs nothing but a few dispatches, it
+produces the number A-01 needs to set a defensible default, and it may show that the
+cheapest fix to spend is configuration rather than a control.
 
 **Leverage.** A-05 built generically eliminates the resume path A-01 would otherwise need.
 A-06 built first makes A-01's accounting trustworthy. Those three are one project.
@@ -343,6 +415,11 @@ A-06 built first makes A-01's accounting trustworthy. Those three are one projec
 ---
 
 ## 10. Best candidate to validate first
+
+> **Run and resolved.** The gating question below was answered on 2026-09-01: the CLI does
+> report cost, directly as `total_cost_usd`. See §6 for the measurements and A-09 for the
+> larger finding they produced. **The next step is A-09's measurement of a real dispatch,
+> then A-06 and A-01.** The reasoning below stands unchanged and is why it was run first.
 
 **A-01's gating question, then A-06.**
 
