@@ -190,6 +190,34 @@ def append_event(run_id: str, state: dict) -> None:
         handle.flush(); os.fsync(handle.fileno())
 
 
+def attribution(state: dict, approver: str) -> str:
+    """How much this record is actually entitled to claim about who approved.
+
+    The CLI takes `--approver` as a string and cannot authenticate it; the HTTP path binds
+    a registered identity. The audit line used to say "approved by a named human" either
+    way, which made the evidence layer -- the one thing built to be trustworthy -- assert
+    something nobody had checked. So the note now states what was verified: the store is
+    consulted when one exists, and when it does not the line says the name is unverified
+    rather than implying it is not.
+    """
+    try:
+        from runtime.projection import default_db
+        path = default_db()
+        if not path.is_file():
+            return f"approved by '{approver}' (name self-asserted at the CLI, unverified)"
+        from runtime.db import NotFound, Store
+        try:
+            actor = Store(path).actor(state.get("org_id", DEFAULT_ORG), approver)
+        except NotFound:
+            return f"approved by '{approver}' (not a registered actor in this organization)"
+        if actor["actor_type"] != "human" or actor["status"] != "active":
+            return (f"approved by '{approver}' (registered as an {actor['actor_type']}, "
+                    f"status {actor['status']})")
+        return f"approved by {approver}, a registered active human"
+    except Exception:  # noqa: BLE001 - attribution must never block the gate it describes
+        return f"approved by '{approver}' (attribution could not be checked)"
+
+
 def audit_evidence(run_id: str) -> str:
     """The run's own log is the evidence for anything the runtime records about it."""
     path = run_path(run_id)
@@ -285,7 +313,7 @@ def approve(args) -> None:
         step = state["steps"][args.step]
         return {"actor": args.approver, "action": step["action"], "category": step["risk"],
                 "target": f"{args.run_id}/{args.step}", "approval": "granted", "outcome": "ok",
-                "note": f"approved by a named human against reference {args.approval_ref}"}
+                "note": f"{attribution(state, args.approver)} against reference {args.approval_ref}"}
     mutate(args.run_id,args.request_id,"step.approved",args.approver,args.step,change,audit); print("in_progress")
 
 
@@ -299,7 +327,8 @@ def reject(args) -> None:
         step = state["steps"][args.step]
         return {"actor": args.approver, "action": step["action"], "category": step["risk"],
                 "target": f"{args.run_id}/{args.step}", "approval": "denied", "outcome": "blocked",
-                "note": f"declined by a named human against reference {args.approval_ref}"}
+                "note": f"{attribution(state, args.approver).replace('approved', 'declined', 1)} "
+                        f"against reference {args.approval_ref}"}
     mutate(args.run_id,args.request_id,"step.rejected",args.approver,args.step,change,audit); print("rejected")
 
 

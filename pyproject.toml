@@ -1,0 +1,26 @@
+[project]
+name = "myorg-runtime"
+version = "0.5.0"
+description = "The governed execution runtime behind the MyOrg Company OS"
+requires-python = ">=3.11"
+
+# Deliberately empty. Every module under runtime/, scripts/ and tests/ imports only the
+# standard library -- verified, not assumed, by tests/test_dependencies.py. That is why the
+# state machine, the audit chain, the cross-platform lock, the HTTP boundary and the
+# connector gateway are all hand-written: a governance runtime with no supply chain cannot
+# be compromised through one, and `pip install` is not a step in standing this company up.
+#
+# Adding a dependency is therefore a decision, not a convenience. Pin it here with an exact
+# version, and say in the pull request what it does that the standard library cannot.
+dependencies = []
+
+[project.optional-dependencies]
+# Nothing here either: the suite runs on unittest, driven by tests/run.sh.
+dev = []
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["runtime"]

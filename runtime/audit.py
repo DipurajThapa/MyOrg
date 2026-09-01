@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +31,12 @@ FIELDS = ("ts", "actor", "action", "category", "target",
           "approval", "evidence", "outcome", "note")
 CATEGORIES = {"green", "yellow", "red"}
 APPROVALS = {"not-required", "pending", "granted", "denied"}
-OUTCOMES = {"ok", "awaiting-approval", "blocked", "breach-flagged", "refused"}
+# A gate transition either happened or did not. A call to somebody else's system has a
+# third answer -- it left and we never heard back -- and flattening that into "ok" or
+# "refused" is exactly the lie this log exists to prevent.
+OUTCOMES = {"ok", "awaiting-approval", "blocked", "breach-flagged", "refused",
+            "attempted", "executed", "failed", "unresolved"}
+EVIDENCE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def log_path() -> Path:
@@ -65,7 +71,14 @@ def entry_digest(entry: dict) -> str:
 
 
 def resolve_evidence(value: str) -> str:
-    """Evidence is a path, repo-relative where it can be. It must actually be there."""
+    """Evidence is a path, repo-relative where it can be. It must actually be there.
+
+    An external call has no file to point at -- what it acted on is a payload that left
+    this host -- so a `sha256:<hex>` content digest is accepted in its place. Anything
+    else is a typo or a fabrication, and is refused either way.
+    """
+    if EVIDENCE_DIGEST_RE.fullmatch(value):
+        return value
     if (ROOT / value).exists() or Path(value).exists():
         return value
     raise SystemExit(f"audit evidence path does not exist: {value}")

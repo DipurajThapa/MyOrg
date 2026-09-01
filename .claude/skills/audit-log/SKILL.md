@@ -25,6 +25,18 @@ answered from the record, not from memory. Full schema and rules: `logs/README.m
 | A 🔴 action is refused and handed back | `payment.transfer` | `red` | `outcome: refused` |
 | An SLA deadline passes unmet | `sla.breach` | `green` | `outcome: breach-flagged` |
 | A prior entry was wrong | `audit.correction` | — | note names the corrected `ts` |
+| A call to an outside system is about to leave | `connector.<action>` | `yellow` | `granted`, `outcome: attempted` |
+| …and the provider accepted it | `connector.<action>` | `yellow` | `outcome: executed` |
+| …and the provider rejected it | `connector.<action>` | `yellow` | `outcome: failed` |
+| …and we never heard back | `connector.<action>` | `yellow` | `outcome: unresolved` |
+
+**Why an outward call gets two lines, not one.** A call to somebody else's system can leave
+this host and never be answered. `attempted` is written *before* the bytes go, so that
+possibility is on the record even if this process dies mid-flight; the second line settles
+it. `unresolved` is a real answer and the runtime never converts it into `failed` — doing so
+is what makes a retry charge the customer twice. Those entries are written by
+`runtime/live_gateway.py`, not by an agent; find the open ones with
+`GET /v1/connectors/in-flight`.
 
 ## How to append
 

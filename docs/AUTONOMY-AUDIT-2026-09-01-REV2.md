@@ -27,33 +27,30 @@ and the settled decision recorded in REV1 §9].** An organization of 17 departme
 that acts on plain-language business goals with *exception-based* human involvement:
 autonomous inside 🟢 green, approval-gated at 🟡 yellow, handed back at 🔴 red.
 
+> **Status note, cycle 2 (2026-09-01, later).** Items 1–5 below were the position when
+> this section was written. All five have since been closed and verified; the current
+> position is §16. They are left in place because the reasoning is still the clearest
+> statement of what was wrong, and striking them out would hide how the product moved.
+
 **How close it is.** The **execution spine is real and tested**. What is still missing is
 everything that connects that spine to the world:
 
-1. **Agents cannot act — only write. [V]** `runtime/backends.py:56` dispatches every step
-   as `claude -p … --allowedTools ""`. Tools are disabled by design so the driver is the
-   only writer. The consequence is that every department's output is prose about work,
-   never the work: no file read, no query, no system touched. A "CFO reconciliation" is a
-   description of a reconciliation. This is the single largest gap between the current
-   product and an autonomous organization.
-2. **Nothing can start work except a person. [V]** No `/webhooks` route (`runtime/api.py`
-   route table has none, though `WebhookVerifier` exists in `connectors.py`), no cron or
-   calendar trigger, no SLA clock, no installed scheduler service (`deploy/` ships api,
-   backup and maintenance units only). `scheduler.serve()` exists but is bounded by
-   `max_passes` and must be launched by hand.
-3. **Governance evidence is still self-reported. [V]** `logs/audit-log.jsonl` is unchanged
-   at 7 hand-authored lines dated 2026-07-14, and no `.py`/`.ts`/`.sh` outside `tests/`
-   appends to it. REV1's RCA-5 corrective (`runtime/audit.py`) was never built, and the
-   tracker ID `OBS-05` was re-used for stall detection — so the gap silently left the
-   tracker while the RCA remained.
-4. **The read-model half has never been instantiated here. [V]** `runtime/data/` does not
-   exist, so no SQLite store, no orgs, no projection rows. `state/` still contains only
-   `README.md`: `scripts/org_state.py` (goals/tasks/decisions) has never recorded anything.
-5. **The suite is red, and the tracker says it is green. [V]** `bash tests/run.sh` →
-   `SUITE: FAIL`, 5 failing checks (2 × `CLAUDE.md` size, `demand-gen` per-send gating,
-   DSR send gating, breach-notification gating). REV1 `TEST-01` claims "only CORE's two
-   size checks fail". Documentation has drifted ahead of the code again, in the same
-   direction as before.
+1. ~~**Agents cannot act — only write.**~~ **CLOSED** (AGENT-06/EXEC-01). `runtime/backends.py:56`
+   dispatched every step as `claude -p … --allowedTools ""`. Tools are now granted per role
+   and scoped to a per-step workspace; a department produces real files, hashed into the
+   evidence.
+2. ~~**Nothing can start work except a person.**~~ **CLOSED** (HOOK-02/03, TOOL-07, DEP-07).
+   `POST /v1/webhooks/{org}/{connector}` verifies an HMAC signature and enqueues a
+   pre-registered goal; a schedule store fires on the clock; the scheduler runs
+   `--supervised` under a systemd unit or a Windows scheduled task and treats an idle pass
+   as normal rather than as a reason to exit.
+3. ~~**Governance evidence is still self-reported.**~~ **CLOSED** (AUD-01/02). `runtime/audit.py`
+   writes the line as a side effect of the gate; live connector calls now write one too.
+4. ~~**The read-model half has never been instantiated here.**~~ **CLOSED** (ARCH-06). The store
+   exists, four gold runs are projected, and a live run was decided over HTTP.
+   (`state/` and `scripts/org_state.py` remain unused — WF-10/MEM-04, still open.)
+5. ~~**The suite is red, and the tracker says it is green.**~~ **CLOSED** (TEST-01, SKILL-04,
+   DOC-07). `bash tests/run.sh` → `SUITE: PASS`, exit 0, verified twice this session.
 
 **Strongest parts [V].** The state machine (`company_runtime.py`): hash-chained
 append-only events, idempotent mutations, retry/cycle caps, evidence integrity re-verified
@@ -124,15 +121,15 @@ Legend: ✅ Completed · 🟡 Partial · ⛔ Not started · 🚧 Blocked · ❓ 
 | Workflow state machine | Governed DAG execution | 374 lines; append-only hash-chained events, idempotent mutations, retry/cycle caps, 6 terminal states | ✅ | `runtime/company_runtime.py`; 21 controlled-runtime checks pass | — | — | Foundation; sound |
 | Cross-platform locking | Run the runtime anywhere | `fcntl` POSIX / `msvcrt` Windows, bounded polling | ✅ | `runtime/filelock.py`; 5/5 `test_filelock` | — | — | Unblocked local verification |
 | Executor (agent invoker) | Turn ready steps into finished work | Claims step, dispatches to owner via `claude -p`, grades, writes hashed evidence, calls `complete` | ✅ | `runtime/executor.py`; 9 executor tests; `gold-auto-01/02` | Tools disabled; green path only for auto-advance | — | Core of autonomy; works |
-| Agent tool access | Let departments touch real systems | **None** — `--allowedTools ""` | ⛔ | `runtime/backends.py:56` | Per-role tool allowlist, governed tool surface | AGENT-06, TOOL-08 | **Top blocker** — output is prose, not work |
+| Agent tool access | Let departments touch real systems | Per-role grants from `tools.json`, scoped to a per-step workspace; Bash/WebFetch/Task ungrantable | ✅ | `runtime/tools.json`, `tests/test_tools.py`; live CFO run produced a real CSV | Connectors and network stay ungranted to agents — those go through the gateway | — | Departments do work, not prose |
 | Maker-checker driving | Independent review without a human | `drive_check()`; unreadable verdict treated as RETURN | ✅ | `runtime/checking.py`; 7 tests; live `gold-mc-03` | — | — | Quality loop closed |
 | Output validation | Reject stubs/refusals; grade vs. criteria | Structural gate + opt-in acceptance grader | ✅ | 6 gate tests; live `gold-graded-01` rejected then passed | Grader is same model family as author | — | Prevents junk advancing |
 | Planner | Goal → validated workflow DAG | `runtime/planner.py`, 3 repair attempts against real validator | ✅ | 9 tests; live `fix-onboarding` = 18 steps / 10 depts | Plans are structural, not data-informed | Tool access | Goal intake works |
-| Scheduler | Drive runs without a human command | `sweep()` / `serve()` / `watch()` / `mirror()`, bounded | 🟡 | `runtime/scheduler.py`; 6 sweep tests | No installed service; no daemon; must be launched by hand | DEP unit | Autonomy stops when the shell closes |
-| Triggers (webhook / cron / SLA) | Let the world start work | **None wired** — verifier exists, no route | ⛔ | no `/webhooks` in `api.py` route table; no cron in code | Endpoint, event→run mapping, clock | HOOK-02/03/04 | Org is reactive-to-humans only |
+| Scheduler | Drive runs without a human command | `sweep()` now takes in new work before driving; `serve(stop_when_idle=False)` with a signal-driven clean stop | ✅ | `runtime/scheduler.py`; 56 scheduling tests incl. supervised-loop and triggered-sweep | Single replica; no leader election if two hosts run it | OPS-01 | Autonomy survives the shell closing |
+| Triggers (webhook / cron / SLA) | Let the world start work | Signed `/v1/webhooks/{org}/{connector}`, a schedule store fenced on `next_fire_at`, replay-safe intake queue | ✅ webhook + cron · ⛔ SLA | `runtime/triggers.py`; 50 trigger tests; live end-to-end run | SLA/threshold clocks | HOOK-04 | The system notices, not only the human |
 | Human notification | Tell a person a gate is waiting | `runtime/notify.py` outbox + optional operator-wired command | ✅ | `runtime/runs/_outbox.jsonl` (1,428 B, populated) | Delivery command not configured; no SLA/age escalation | — | Silence problem solved locally |
 | Approval console | Decide from a brief, not a wall of prose | `approval_server.py` + `briefing.py`, 5-line ASK/IF YES/FINDINGS/WATCH/RECOMMEND, ordered by blast radius | ✅ | 20 tests incl. ordering + XSS; `*.release-output.brief` files | Local, single operator, no auth | — | Human latency reduced |
-| Approval UI (Control Center) | Approve/reject from the web app | Intake + UI-state only | ⛔ | `apps/control-center/app/control-center.tsx` | Approve/reject surface | API-02 | Gates are terminal-only |
+| Approval UI (Control Center) | Approve/reject from the web app | Queue screen reads `GET /v1/decisions` and posts a decision with a required reason; red steps render as handed back | ✅ | 29 tests incl. real HTTP; `module-decisions.sh` | No run-detail/timeline view; no trigger or in-flight-receipt screen | UI-02 | Gates answerable from the web |
 | Agent-facing API | Out-of-process agents claim/submit work | `GET /v1/work`, `/v1/claim`, `/v1/submit`, `/v1/heartbeat`, `/v1/fail` | ✅ | `runtime/agent_api.py`; 22 tests | One shared bearer token; no per-agent identity | — | Enables external workers |
 | Leases / liveness | Detect a hung step | `runtime/leases.py` grant/renew/release/expire | ✅ | 149 lines + tests | No lease file present (never exercised outside tests) | — | Recovery path exists |
 | Run health / stall detection | Know what is stuck | `runtime/health.py`: running / waiting / stalled / finished / failed | ✅ | 7 health tests | No alerting — a person must look | OBS-02/03 | Self-monitoring, unnotified |
@@ -140,14 +137,15 @@ Legend: ✅ Completed · 🟡 Partial · ⛔ Not started · 🚧 Blocked · ❓ 
 | Memory (cross-run) | Don't re-solve the same problem | Append-only, hash-chained, propose→approve→recall into prompts | ✅ | 17 tests; live lesson crossed runs | Keyword recall only; 2 entries total | — | Working, barely used |
 | Org state (goals/tasks/decisions) | Durable accountability outside runs | `scripts/org_state.py` written | ⛔ | `state/` = `README.md` only | Any adoption at all | — | Dead code today |
 | State architecture | One answer to "what is ready?" | Log = execution record; SQLite = identity + read model; one-way `projection.py` | ✅ | 15 projection tests; migration `004` | `runtime/data/` absent here → store never created; Control Center still reads the old shape | — | Drift resolved by decision |
-| Audit log writer | Tamper-evident "who approved what" | **None** | ⛔ | `logs/audit-log.jsonl` = 7 lines, 2026-07-14; no non-test writer | `runtime/audit.py` + call sites + behaviour test | — | **Governance is self-reported** |
-| Connectors | Reach external systems | Admission control, authorization lifecycle, idempotency, receipts, webhook verification | 🟡 | `runtime/connectors.py`, `service.py`, migration 003 | Fixture-only gateway; no real HTTP/OAuth adapter | Human OAuth | Org has no hands |
+| Audit log writer | Tamper-evident "who approved what" | `runtime/audit.py` — validated, hash-chained, fsynced, locked; written by the gate and by every live connector call | ✅ | 14 audit tests + 21 live-gateway tests; chain verifies | SLA and escalation events still unwired | — | Governance is recorded, not claimed |
+| Connectors | Reach external systems | Real HTTPS adapter: resolve-time SSRF check, env-only secrets, intent recorded before the send, three-outcome settlement | ✅ adapter · 🚧 a live provider | `runtime/live_gateway.py`; `tests/test_live_gateway.py` 21/21 | No provider authorized yet — a human OAuth act, by design | Human OAuth | The hands exist; nobody has shaken one |
 | MCP / plugin config | Bind declared skills to real tools | **None in repo** | ⛔ | no `.mcp.json`, no `plugin.json` | Tool bindings for the 124 declared skills | ARCH-05 | Declared ≠ usable |
 | HTTP service | Operator/API boundary | 16 routes, HMAC short-lived tokens, DB-bound roles, rate limit, headers, body cap | ✅ | `runtime/api.py`, `auth.py`, `db.py` | No run/step read routes; no OpenAPI | ARCH-01 | Sound |
-| Test suite | Prove behaviour | 12 shell modules + ~39 Python test modules (218 checks + unit tests) | 🟡 | `bash tests/run.sh` → `SUITE: FAIL`, 5 failures | 3 governance-prose failures + 2 size failures; still ~majority grep-over-Markdown | DOC-07, SKILL-04 | Verification integrity |
-| CI | Catch regressions | compileall, suite, CodeQL, SBOM, npm audit, release gate | 🚧 | `.github/workflows/ci.yml` | **The project is not a git repository** — CI has never run and nothing is committed | git init | No regression safety net |
-| Deployment | Run it for real | systemd api/backup/maintenance units, reverse-proxy sample, env template, Cloudflare worker | 🟡 | `deploy/`, `apps/control-center/worker/index.ts` | No scheduler/executor unit; never deployed; no rollback drill | — | Nothing runs unattended |
-| Python dependency manifest | Reproducible toolchain | **None** | ⛔ | no `requirements.txt` / `pyproject.toml` | Pin interpreter + pytest | — | Environment drift |
+| Test suite | Prove behaviour | 14 shell modules + ~43 Python test modules | ✅ | `bash tests/run.sh` → `SUITE: PASS`, exit 0 (run twice this session) | Still ~majority grep-over-Markdown; the behaviour share is rising | TEST-02 | Verification integrity restored |
+| CI | Catch regressions | compileall, suite, CodeQL, SBOM, npm audit, release gate | 🟡 | `.github/workflows/ci.yml`; 11 commits on `main` | ubuntu-only matrix; never executed on a remote — no push target is configured | TEST-05, VCS-03 | The local suite is the only gate today |
+| Deployment | Run it for real | systemd api/backup/maintenance **and scheduler** units, a Windows scheduled-task installer, reverse proxy, env template, worker | 🟡 | `deploy/myorg-scheduler.service`, `deploy/install-scheduler-windows.ps1` | Never deployed to a real host; no rollback drill; neither unit has been executed by its supervisor | PROD-04/05 | Unattended operation is installable, not yet installed |
+| Python dependency manifest | Reproducible toolchain | `pyproject.toml`: Python ≥3.11, zero dependencies, enforced by a test that walks every import in the tree | ✅ | `tests/test_dependencies.py` 4/4 | — | — | No supply chain to compromise |
+| State architecture isolation | A test can never write to the company's data | The read model follows `MYORG_RUNS_DIR`, as the run log and the audit log already did | ✅ | `test_a_sweep_never_mirrors_into_the_companys_real_database` | — | — | Fixed after ten fabricated runs were found in production |
 
 ---
 
@@ -253,7 +251,7 @@ marked **(new)**.
 | AGENT-08 | Maker-checker driving | ✅ | `drive_check()` | — | — | — | `gold-mc-03` |
 | AGENT-09 | Handoff payload | ✅ | Hash-verified upstream evidence | Direct edges only (deliberate) | — | — | 5 handoff tests |
 | LOOP-02 | Execution loop | ✅ | `advance()` bounded | — | — | — | `test_the_driver_never_loops_forever` |
-| LOOP-03 | Scheduled sweep | 🟡 | `scheduler.sweep/serve` | Not installed as a service | DEP-07 | **P0** | 6 sweep tests; no unit in `deploy/` |
+| LOOP-03 | Scheduled sweep | ✅ | `sweep()` takes in triggered work and then drives; `serve()` distinguishes a *command* (stop when idle) from a *service* (idle is normal) | Single replica only | — | ~~P0~~ done | 56 scheduling tests; `deploy/myorg-scheduler.service` |
 | LOOP-04 | Feedback loop | ✅ | Checker reasons → next attempt | Run-level feedback | — | P2 | `gold-mc-02` |
 | LOOP-05 | Learning loop | 🟡 | Auto-proposes a lesson on RETURN/REJECT | Signal capture beyond checker verdicts | MEM-06 | P2 | `memory.py` |
 | LOOP-06 | Checkpoint / budget loop | ⛔ | Documented caps only | Time/cost budget enforcement | — | P2 | `operating-model.md` §4 |
@@ -265,12 +263,12 @@ marked **(new)**.
 | EXEC-01 **(new)** | Governed tool access for dispatched agents | ✅ | Each step runs in its own workspace (`runtime/workspaces/<run>/<step>/`) with `--tools`, workspace-scoped `--allowedTools` and `--permission-mode dontAsk`. Files the agent leaves are hashed into the evidence, so the recorded hash covers the artifacts as well as the text | Local files only; connectors and network still ungranted (TOOL-03/04) | — | ~~P0~~ done | live run: `cfo-finance` produced a real CSV + model; 16 tests |
 | AGENT-06 | Per-role tool permissions | ✅ | `runtime/tools.json`, the same shape as `policy.json`: a default grant plus per-role overrides, validated on load. Bash, WebFetch, WebSearch, Task and Agent are ungrantable with the reason recorded — Bash is scoped by command, never by path, so no workspace can bound it | Every role currently takes the default; overrides exist but none are needed yet | — | ~~P0~~ done | `tests/test_tools.py` |
 | HOOK-01 | Claude Code hooks | ⛔ | None | PreToolUse/PostToolUse enforcement of §3 | EXEC-01 | P1 | `.claude/` has no hooks |
-| HOOK-02 | Inbound webhook trigger | ⛔ | `WebhookVerifier` built, unwired | Route + event→run mapping | ARCH-06 | **P0** | no `/webhooks` in `api.py` |
-| HOOK-03 | Cron / calendar triggers | ⛔ | Prose in `CLAUDE.md` §5 | In-product schedule store + firing | LOOP-03 | **P0** | no cron in code |
-| HOOK-04 | SLA / threshold triggers | ⛔ | SLA described in `lead-response` | Clock + breach event | HOOK-03 | P1 | — |
-| TOOL-03 | Real execution gateway | 🟡 | Fixture only, refuses non-fixture | HTTP/OAuth adapter | TOOL-02 | P1 | `FixtureConnectorGateway` |
-| TOOL-04 | Live connectors | 🚧 | `fixture.invalid` | Human OAuth authorization | TOOL-03 | P1 | ledger 0.1 |
-| TOOL-07 | Webhook ingestion route | ⛔ | Verifier only | Endpoint | HOOK-02 | P1 | — |
+| HOOK-02 | Inbound webhook trigger | ✅ | `POST /v1/webhooks/{org}/{connector}`: HMAC + nonce + skew window, no bearer token, rate-limited per connector, and one identical refusal for every rejection so the route cannot be used to enumerate what we listen for. The payload selects a **pre-registered** goal and never supplies one | Only the `event_type` field is read; richer payload→context mapping is future work | — | ~~P0~~ done | 24 trigger tests incl. real HTTP; live e2e |
+| HOOK-03 | Cron / calendar triggers | ✅ | `schedules` table with `next_fire_at` as a fence — claiming and advancing are one UPDATE, so two sweepers fire it once. A schedule that fell behind catches up once, not for every interval it missed | UTC only; no calendar (RRULE) semantics | — | ~~P0~~ done | 9 schedule tests incl. a two-thread race |
+| HOOK-04 | SLA / threshold triggers | ⛔ | SLA described in `lead-response` | Clock + breach event, on top of the schedule store now in place | HOOK-03 | P1 | — |
+| TOOL-03 | Real execution gateway | ✅ | `runtime/live_gateway.py`: resolve-time address check (a name public at admission can point inside by call time), secrets read from the environment only, no redirects, response ceiling, and a receipt written **before** the send | Only bearer-token auth; no OAuth refresh flow yet | — | ~~P1~~ done | `tests/test_live_gateway.py` 21/21 |
+| TOOL-04 | Live connectors | 🚧 | The adapter is real and tested against a fake provider; no real provider is authorized | A human OAuth grant against an actual vendor, then provider-specific tests | TOOL-03, human | P1 | ledger 0.1; `authorize_connector` path exercised |
+| TOOL-07 | Webhook ingestion route | ✅ | Folded into HOOK-02 — same route, same tests | — | — | ~~P1~~ done | `WebhookOverHttpTest` |
 | TOOL-08 | MCP / plugin config | ⛔ | None | `.mcp.json` binding declared skills | ARCH-05 | P1 | repo has neither |
 | ARCH-05 | Declared external dependencies | 🟡 | `company/skills.manifest.json`, 124 declared, 0 unresolved | All `verified_here: false`; nothing binds them | TOOL-08 | P1 | `skills.summary()` |
 
@@ -315,14 +313,14 @@ marked **(new)**.
 
 | ID | Deliverable | Status | What Exists | What Is Missing | Deps / Blockers | Pri | Evidence |
 |---|---|---|---|---|---|---|---|
-| VCS-01 **(new)** | Version control | ⛔ | `.github/workflows/ci.yml` | **Not a git repository** — CI has never run | — | **P0** | env check; REV1 TEST-06 note |
-| TEST-01 | Suite green | ⛔ | 218 checks + unit modules | 5 failures: 2 × `CLAUDE.md` size, demand-gen per-send, DSR send, breach notify | DOC-07, SKILL-04 | **P0** | `bash tests/run.sh` |
-| SKILL-04 **(new ID for the 3 prose failures)** | Governance text matches tests | ⛔ | Skill docs | Restore per-send gating wording in `demand-gen`, `privacy-program` | — | P1 | 3 failing checks |
+| VCS-01 **(new)** | Version control | ✅ | Git repository on `main`, 11 commits, conventional messages, `.gitattributes` and `.gitignore` in place | No remote configured, so nothing is pushed or backed up off this machine | VCS-03 | ~~P0~~ done | `git log` |
+| TEST-01 | Suite green | ✅ | 14 shell modules + ~43 Python modules | — | — | ~~P0~~ done | `bash tests/run.sh` → `SUITE: PASS`, exit 0 |
+| SKILL-04 **(new ID for the 3 prose failures)** | Governance text matches tests | ✅ | Per-send gating wording restored in `demand-gen` and `privacy-program` | — | — | ~~P1~~ done | revenue-engine 40/0, trust-compliance 36/0 |
 | TEST-02 | Behaviour vs. prose ratio | 🟡 | Real behaviour tests now exist for executor/planner/scheduler/memory/health | Majority of checks still grep Markdown | — | P1 | suite inspection |
 | TEST-05 | Cross-platform CI | ⛔ | ubuntu-24.04 only, never executed | windows-latest matrix | VCS-01 | P1 | `ci.yml` |
-| DEP-06 | Python dependency manifest | ⛔ | None | `requirements.txt`/`pyproject.toml`, pin pytest | — | P1 | repo root |
-| DEP-07 **(new)** | Scheduler/executor service unit | ⛔ | api/backup/maintenance units | Supervised loop unit + Windows equivalent | LOOP-03 | **P0** | `deploy/` |
-| DOC-07 | `CLAUDE.md` within guardrail | ⛔ | 222 lines / 12,592 B | Trim, or raise the cap deliberately | — | P1 | `core.sh` |
+| DEP-06 | Python dependency manifest | ✅ | `pyproject.toml`: Python ≥3.11, **zero** dependencies — the runtime is stdlib-only, which is why the state machine, lock, HTTP boundary and gateway are hand-written | — | — | ~~P1~~ done | `tests/test_dependencies.py` walks every import and names any offender |
+| DEP-07 **(new)** | Scheduler/executor service unit | ✅ | `deploy/myorg-scheduler.service` (hardened, `Restart=on-failure`, SIGTERM finishes the pass in flight) and `deploy/install-scheduler-windows.ps1` for the platform this host actually runs | Neither has been executed by its supervisor on a real host | PROD-04 | ~~P0~~ done | 4 supervised-loop tests |
+| DOC-07 | `CLAUDE.md` within guardrail | ✅ | Inside the size cap | — | — | ~~P1~~ done | CORE 51/0 |
 | DOC-08 **(new)** | Docs state the target vs. today | ⛔ | README/RUNTIME-AUDIT describe HITL as the goal | One line stating the settled autonomy target and that HITL is the current stage | — | P2 | `docs/RUNTIME-AUDIT.md` |
 | API-02 | Run/step read routes | 🟡 | `GET /v1/decisions` and `POST /v1/decisions/{run}/{step}` serve the human queue, org-scoped, `decision-owner` + human identity required, mirrored into `operational_events` | Full run/step listing and timeline still unexposed | ARCH-06 | P1 | `tests/test_decisions.py` |
 | API-06 | OpenAPI spec | ⛔ | None | Machine-readable contract | — | P2 | — |
@@ -342,11 +340,13 @@ marked **(new)**.
 | ~~0~~ | ~~Two drivers can do the same step~~ | REC-10 | **CLOSED 2026-09-01.** Ownership is a precondition of the write, not a courtesy | Safe multi-replica workers; unblocks DEP-07 and the Docker migration |
 | ~~0~~ | ~~Quality gates fail open~~ | VAL-07 | **CLOSED 2026-09-01.** A control that cannot run no longer reports a pass | Trustworthy unattended grading; safe multi-replica operation later |
 | ~~1~~ | ~~Governance evidence is self-reported~~ | AUD-01, AUD-02 | **CLOSED 2026-09-01.** `runtime/audit.py` writes the line as a side effect of the gate; the transition fails closed if the log cannot be written. RCA-A's root cause — control and evidence on the same side of the trust boundary — is removed for gate transitions | Trustworthy unattended operation; HITL-05; every governance claim in the ledger |
-| 2 | Agents cannot use tools | EXEC-01, AGENT-06 | Output is prose about work, not work. Every department capability is currently unfalsifiable. | Real deliverables, data-informed planning, live connectors, real workflows |
-| 3 | Nothing can start work but a person | HOOK-02, HOOK-03, HOOK-04, TOOL-07 | Exception-based autonomy requires the system to notice the exception. | Revenue-engine and compliance skills whose value is timeliness |
-| 4 | The loop is not a supervised service | LOOP-03, DEP-07 | Autonomy currently lasts as long as a terminal stays open. | Unattended operation; SLA clocks; stall alerting |
-| 5 | No version control | VCS-01 | No review, no revert, no CI; the safety net for every change above does not exist. | CI, regression safety, evidence that survives |
-| 6 | Suite is red while the tracker says green | TEST-01, SKILL-04, DOC-07 | Verification integrity: a red suite carried forward silently is how REV1's drift happened. | Trustworthy "done" |
+| ~~2~~ | ~~Agents cannot use tools~~ | EXEC-01, AGENT-06 | **CLOSED 2026-09-01.** Scoped grants inside a per-step workspace | Real deliverables; the connector work that followed |
+| ~~3~~ | ~~Nothing can start work but a person~~ | HOOK-02, HOOK-03, TOOL-07 | **CLOSED 2026-09-01 (cycle 2).** A signed webhook or the clock starts a run; the payload selects a pre-registered goal and never supplies one | Revenue-engine and compliance skills whose value is timeliness. HOOK-04 (SLA clocks) remains |
+| ~~4~~ | ~~The loop is not a supervised service~~ | LOOP-03, DEP-07 | **CLOSED 2026-09-01 (cycle 2).** An idle pass is the normal state of a service; SIGTERM finishes the pass in flight; a second loop is refused | Unattended operation; stall alerting |
+| ~~5~~ | ~~No version control~~ | VCS-01 | **CLOSED.** 11 commits on `main` | CI — though no remote is configured yet (VCS-03) |
+| ~~6~~ | ~~Suite is red while the tracker says green~~ | TEST-01, SKILL-04, DOC-07 | **CLOSED.** `SUITE: PASS`, exit 0 | Trustworthy "done" |
+| 7 | Nothing observes the autonomous half | OBS-08 | The company now acts unattended, and the only instrumented component is the web server. A stalled queue, runaway spend, or an unanswered approval is invisible until a person looks. | Every guarantee above becoming one somebody would notice failing |
+| 8 | Standing autonomy is `curl`-only | UI-02 | Triggers and schedules can be created and paused only through the API. For a product whose safety story is human oversight, the newest and least reversible controls are missing from the oversight surface. | Operator confidence; safe day-to-day use |
 
 ### P1 — Major capability gaps
 
@@ -711,11 +711,287 @@ hypothetical, and a fail-open grader stops being observable by a human at the ke
 
 ## 15. Next recommended action (smallest set that removes the most uncertainty)
 
-**`git init` + first commit (VCS-01/VCS-02), then the audit writer (AUD-01/AUD-02).**
+> **Superseded by §20.** Everything named below was completed. The current recommendation is
+> OBS-08 — instrument the autonomous half.
+
+~~**`git init` + first commit (VCS-01/VCS-02), then the audit writer (AUD-01/AUD-02).**~~
 Unchanged from REV2 §8, and now better justified: VCS-01 is a hard prerequisite of
 SKILL-04 (I-09), and the two new P0s found this cycle — VAL-07 and REC-10 — both change
 governance-critical code paths that must not be edited before there is a way to review and
 revert them.
 
-Do **not** start VAL-07, REC-10, AGENT-06 or DEP-07 in the same session. VAL-07 and REC-10
-are the next two, in that order, once history exists.
+~~Do **not** start VAL-07, REC-10, AGENT-06 or DEP-07 in the same session.~~ All four have
+since landed, each with its own tests.
+
+---
+
+# Investigation Cycle 2 — connectors, triggers, and the loop as a service (2026-09-01, evening)
+
+Scope as agreed: **TOOL-03/04** (real connectors) and **DEP-07 + HOOK-02/03** (run the loop
+as a service, with triggers). Plus a tracker truth pass, and an independent
+production-readiness review that was deliberately *not* bounded by this tracker.
+
+Method: read the code, then run it, and prefer evidence produced by execution over evidence
+produced by reading. Tags as before: **[V]** verified by execution here · **[V-static]**
+verified by reading · **[I]** inference · **[?]** unknown.
+
+## 16. Where the product actually stands
+
+**Verified baseline, before any change [V].** `bash tests/run.sh` → `SUITE: PASS`, exit 0.
+The tracker had carried `TEST-01`, `SKILL-04`, `DOC-07` and `VCS-01` as open since REV2 was
+written; all four had in fact been closed by the commits that landed after it. That is the
+opposite of the REV1→REV2 drift — documentation behind the code rather than ahead of it —
+but it is the same failure, and it wants the same corrective: status belongs to a gate, not
+to prose.
+
+**Verified after this cycle [V].** `bash tests/run.sh` → `SUITE: PASS`, exit 0, with 94 new
+checks. The autonomous path was then exercised end to end against a real store, a real HTTP
+server, a real HMAC signature and the real state machine:
+
+```
+[ 6] signed webhook accepted (202)  -- tg-ca82ef81a4160d674f360955
+[ 7] forged webhook refused (403)   -- signature checked before anything is queued
+[ 9] injection boundary held        -- the payload's `goal` field never reached an agent
+[11] scheduler swept                -- started 1, drove 1, 0 idle
+[12] a run exists that no human created -- run-ca82ef81a4160d674f360955
+[13] created by                     -- trigger:webhook / request trigger-tg-ca82...
+[15] run status                     -- active; health says waiting on you
+[18] audit chain                    -- intact
+[19] operator read model            -- visible: True, status active
+```
+
+The run planned itself, drove `frame-goal` and `produce-output`, stopped at
+`release-output` because that step is yellow, wrote its audit line, raised a notice and
+appeared in the operator read model. **That is the north star of `CLAUDE.md` §1 executing
+with no person in the loop, and halting at exactly the point the constitution says it
+must.**
+
+## 17. What was built this cycle
+
+| ID | What | Evidence |
+|---|---|---|
+| TOOL-03 | `runtime/live_gateway.py` — a real HTTPS adapter behind the existing control plane | `tests/test_live_gateway.py` 21/21 |
+| HOOK-02 / TOOL-07 | `POST /v1/webhooks/{org}/{connector}` — the one route with no bearer token | 24 trigger tests incl. real HTTP |
+| HOOK-03 | `schedules` table with `next_fire_at` as a fence; a replay-safe `trigger_intake` queue | 9 schedule tests incl. a two-thread race |
+| DEP-07 / LOOP-03 | `serve(stop_when_idle=False)`, signal-driven clean stop, single-instance guard, systemd unit and Windows installer | 7 supervised-service tests |
+| DEP-06 | `pyproject.toml` — Python ≥3.11, zero dependencies, enforced by a test that walks every import | `tests/test_dependencies.py` 4/4 |
+
+**The design decision that matters most.** A live call has three outcomes, not two: it
+worked, it failed, or *the bytes left and we never heard back*. A fixture can pretend there
+are only two. A real provider cannot. So the gateway consumes the approval and writes an
+`in_flight` receipt **before** a single byte leaves, settles it afterwards, and classifies
+honestly — 2xx `accepted`, 4xx `failed`, and **5xx, timeout or no-response `in_flight`**. A
+retry against an unresolved receipt is refused rather than re-sent:
+
+```
+test_retrying_an_unresolved_call_refuses_instead_of_sending_again
+    self.assertEqual(second.sends, [], "an unresolved call must not be sent a second time")
+```
+
+Recording an unknown outcome as "failed" is exactly what makes a retry charge a customer
+twice. The runtime now says "I do not know", and hands it to
+`GET /v1/connectors/in-flight` where a person reconciles it.
+
+**TOOL-04 stays 🚧, correctly.** The adapter is real and tested against a fake provider, but
+no live provider is authorized — and authorizing one is a human OAuth act under §3, not
+something a session can do on the user's behalf.
+
+### 17.1 What the real-model run revealed [V]
+
+The end-to-end proof was run twice: once with stub backends, and once with real `claude -p`
+for both planning and execution. The real run is worth reading closely, because it found the
+product's honest limit without anyone looking for it.
+
+The planner turned the triggered goal into a `revops` step (`pull-inbound-lead-data`) and a
+downstream analysis step. RevOps ran, and reported — correctly — that it had no data, because
+no CRM connector is authorized. The acceptance grader then **rejected** the analysis:
+
+```
+analyze-volume-trend: rejected -- did not meet acceptance criteria: VERDICT: FAILS
+  Criterion 1 (week-over-week change as number and %) -- missed. The note explicitly
+  refuses to state any figure.
+  Criterion 3 (figures trace to prior step's data) -- missed vacuously. There are no
+  figures to trace, and the prior step delivered no data.
+```
+
+It retried twice more. The second attempt tried to fill the gap with numbers derived from a
+`√N` formula rather than from the pull, and the grader caught that too — *"the only numbers
+present (39%, 28%, 20%…) come from a √N formula, not from the previous step's data"*. After
+three attempts the run terminated `blocked_retry_limit`, health `failed`, visible in the
+operator read model as `blocked`, audit chain intact.
+
+Four things are established by that, and none of them by a test:
+
+1. **The agent did not fabricate.** Asked for lead volume with no source of lead volume, it
+   said so rather than inventing plausible numbers — the failure mode that would make this
+   whole product dangerous.
+2. **The quality gate caught it anyway — including the one attempt that did drift.** VAL-02
+   rejected an empty-but-honest deliverable *and* a filled-in-with-arithmetic one, on live
+   output rather than on a fixture. Belt and braces both held.
+3. **It failed loudly rather than shipping.** `blocked_retry_limit`, `health = failed`, a
+   notice raised, `blocked` in the operator view. The worst outcome for a product like this
+   is a plausible answer nobody asked where it came from; what happened instead was a
+   visible stop.
+4. **TOOL-04 is the binding constraint on usefulness, and only on usefulness.** The
+   execution spine, the triggers, the gates, the grading and the audit trail all work. What
+   the company lacks is not machinery — it is a connected system to reason about. Every
+   department capability stays a claim until one real provider is authorized.
+
+This is the most useful single piece of evidence in this cycle: it separates "the runtime
+does not work" (false) from "the runtime has nothing to work on" (true, and fixable only by
+a human granting access).
+
+## 18. Independent production-readiness review
+
+Not bounded by this tracker. Each finding: what · why it matters · evidence · impact · fix ·
+priority · how to verify.
+
+### 18.1 Verified issues (reproduced here)
+
+**TEST-07 — the test suite was writing into the company's production database. FIXED.**
+*Evidence [V]:* reading `runtime/data/myorg.db` found **ten fabricated runs** — `sch-a`,
+`sch-b`, `sch-cap`, `sch-done`, `sch-good`, `sch-hold`, `sch-loop`, `sch-nodb`,
+`sch-signal`, `sch-stall` — every one a fixture from `tests/test_scheduling.py`.
+*Cause [V-static]:* `MYORG_RUNS_DIR` redirected the run log and, since AUD-01, the audit
+log — but **not** the projection target, so `scheduler.mirror()` faithfully copied test runs
+into the real read model.
+*Impact:* the operator view of the company was two-thirds fiction; any metric, queue depth
+or capacity figure derived from it was wrong; and a test could corrupt production state.
+*Fix:* `projection.default_db()` now follows `MYORG_RUNS_DIR`, the same rule
+`audit.log_path()` already used. The ten rows were removed after backing up the database.
+*Verify:* `test_a_sweep_never_mirrors_into_the_companys_real_database`.
+**Priority: P0 — done.**
+
+**HITL-06 — the audit log asserted something nobody had checked. PARTLY FIXED.**
+*Evidence [V-static]:* `company_runtime.approve` takes `--approver` as a free string that
+nothing authenticates, and the audit note read `approved by a named human`.
+*Why it matters:* the audit log exists precisely so governance claims are not self-reported.
+A record saying "a named human" when no human was verified is the same class of defect
+AUD-01 was built to remove, one layer up.
+*Fix:* the note now states what was actually checked — `a registered active human`, or
+`not a registered actor in this organization`, or `name self-asserted at the CLI,
+unverified`. *Verify:* three new tests in `tests/test_audit.py`.
+*Remaining:* the CLI still cannot authenticate. Binding it to the store, or retiring the CLI
+approval path in favour of `/v1/decisions`, is the real fix. **P1, open.**
+
+**SEC-08 — a valid signature was an unbounded bill. FIXED.**
+*Evidence [V-static]:* every queued trigger becomes a *planned* run, planning is a model
+call, and the intake queue had no ceiling. A provider retrying in a loop — or a leaked
+signing key — would have spent without limit, unattended.
+*Fix:* `MAX_QUEUED_TRIGGERS = 50`; a full queue is a visible refusal naming the backlog
+rather than silent spend. *Verify:* 4 tests in `BackpressureTest`. **P1 — done.**
+
+**OPS-01 — two supervised loops could both drive the company. FIXED.**
+*Evidence [V-static]:* nothing stopped a second `python -m runtime.scheduler --supervised`.
+Steps are fenced (REC-10) and schedules are fenced by `next_fire_at`, so state could not
+corrupt — but both loops would plan the same goals and pay for the same steps. The ordinary
+way to get two is a unit restarting while an operator has one open in a terminal.
+*Fix:* a file lock on the runs directory. `--once` is deliberately exempt, so the company
+stays inspectable while it works. *Verify:* 3 tests. **P1 — done.**
+
+**DEBT-02 — three modules are past the house limit. OPEN.**
+*Evidence [V]:* `db.py` 933, `company_runtime.py` 553, `api.py` 508, `service.py` 415
+against a 300-line rule; this cycle made two of them worse. *Impact:* review quality and
+change risk, not correctness. *Fix:* split `db.py` by aggregate (identity · runs ·
+connectors · triggers) and lift the `api.py` route chain into a table-driven dispatch.
+**P2.**
+
+### 18.2 Probable risks (reasoned from evidence, not reproduced)
+
+**OBS-08 (new) — nothing observes the autonomous half.**
+`observability.py` exports four HTTP series and `prometheus-alerts.yml` holds three rules,
+all HTTP [V-static]. There is no metric for runs started, steps dispatched, model spend,
+approval age, trigger queue depth, or in-flight receipts. The company can now run
+unattended, and the only thing being watched is the web server.
+*Impact:* a stalled queue, runaway spend, or an approval nobody answered are all invisible
+until a person happens to look. *Fix:* export the numbers the runtime already computes
+(`health.all_health()`, `queued_triggers`, `in_flight_connector_receipts`) and add three
+alerts — queue depth, oldest unanswered approval, unsettled receipt age. *Verify:* scrape
+`/metrics` after a sweep and assert the series exist. **P1. Depends on: nothing.**
+This is the largest remaining gap.
+
+**UI-02 (new) — standing autonomy can only be created or stopped with `curl`.**
+Triggers, schedules, in-flight receipts and connector authorization are API-only; the
+Control Center shows the decision queue and nothing else [V-static].
+*Impact:* the operator cannot see what is allowed to wake the company up, or pause it, from
+the surface they actually use. For a product whose safety story is human oversight, the
+oversight surface is missing the newest and least reversible controls.
+*Fix:* a Triggers screen (list, pause, resume) and an Exceptions screen (in-flight receipts,
+failed triggers). **P1. Depends on: API-02.**
+
+**TOOL-09 (new) — connector authorizations expire and nothing renews them.**
+`authorize_connector` stores `expires_at` up to 366 days out and `_admit` refuses once it
+passes [V-static]. There is no refresh flow and no warning.
+*Impact:* a connector stops working at a moment nobody chose, mid-run, and the failure looks
+like a bug. *Fix:* warn at T-14 days through the notice outbox; implement OAuth refresh when
+a real provider is authorized. **P1. Depends on: TOOL-04.**
+
+**VCS-03 (new) — no git remote, so CI has never executed.**
+11 commits exist locally; no push target is configured [V].
+*Impact:* `.github/workflows/ci.yml` is aspiration, the suite runs only when a human runs
+it, and the only copy of the work is one disk. *Fix:* add a remote, push, enable the
+workflow. **P1.**
+
+**SEC-09 (new) — no key-rotation window.**
+`TokenService` accepts exactly one secret; the token header carries `kid: local-v1` but no
+second key is ever tried [V-static]. The webhook signing secret has the same shape.
+*Impact:* rotating `MYORG_AUTH_SECRET` invalidates every live token at once, so rotation —
+including rotation *after a suspected leak* — is an outage. *Fix:* accept a previous key for
+one token lifetime. **P2.**
+
+**REC-13 (new) — a partially created triggered run was orphaned. FIXED.**
+If `create_run` succeeded but the bookkeeping did not, the trigger was re-queued and the next
+attempt refused with "run already exists", burning attempts until it was marked failed — and
+leaving a run nothing pointed at [I, from reading `triggers.start_queued`]. The run id is
+derived from the trigger, so finding one already there is not a collision: it is the previous
+attempt's work. *Fix:* adopt it. *Verify:*
+`test_a_run_a_previous_attempt_created_is_adopted_not_orphaned`. **P2 — done.**
+
+### 18.3 Unverified concerns (need evidence before acting)
+
+- **Neither deployment unit has been executed by its supervisor [?].** The systemd unit and
+  the Windows scheduled task are written and reviewed but unrun. Until one is started by
+  `systemctl` or `Start-ScheduledTask`, "runs unattended" is a design claim, not a fact.
+  Resolving it is PROD-04.
+- **The 124 declared external skills remain unexercised [?]** — unchanged from REV2 §9.
+- **Grader and author still share a model family (VAL-06) [?]** — unchanged.
+- **Two schedulers across two *hosts* [?].** The new guard is a local file lock. A shared
+  filesystem would hold; a second machine with its own disk would not.
+
+## 19. Tracker changes from this cycle
+
+**Closed and verified:** VCS-01 · TEST-01 · SKILL-04 · DOC-07 (already done; the tracker was
+behind) · TOOL-03 · TOOL-07 · HOOK-02 · HOOK-03 · DEP-06 · DEP-07 · LOOP-03.
+
+**New items**
+
+| ID | Deliverable | Status | Why | Pri | Evidence |
+|---|---|---|---|---|---|
+| TEST-07 | A test can never write to production state | ✅ | Ten fabricated runs were found in the company's real read model | ~~P0~~ done | `test_a_sweep_never_mirrors_into_the_companys_real_database` |
+| SEC-08 | Trigger intake has backpressure | ✅ | A valid signature was an unbounded model bill | ~~P1~~ done | 4 `BackpressureTest` checks |
+| OPS-01 | One supervised loop per runs directory | ✅ | Two loops would plan and pay twice | ~~P1~~ done | 3 `single_instance` checks |
+| OBS-08 | Metrics and alerts for the autonomous half | ⛔ | Only the web server is watched, and the company now runs unattended | **P1** | `observability.py` = 4 HTTP series |
+| UI-02 | Operator surface for triggers, schedules and exceptions | ⛔ | Standing autonomy is `curl`-only | **P1** | Control Center shows decisions only |
+| TOOL-09 | Connector authorization renewal and expiry warning | ⛔ | Access dies at a moment nobody chose | P1 | `_admit` refuses expired |
+| VCS-03 | A git remote, so CI actually runs | ⛔ | CI has never executed | P1 | no remote configured |
+| SEC-09 | Key rotation with an overlap window | ⛔ | Rotation is an outage | P2 | `TokenService` holds one secret |
+| REC-13 | A partially created triggered run is adopted, not orphaned | ✅ | Attempts used to burn against a run that already existed, then abandon it | ~~P2~~ done | `test_a_run_a_previous_attempt_created_is_adopted_not_orphaned` |
+
+**Amended**
+
+- **HITL-06** 🟡 — sharpened. The defect is not only that approver identity is
+  unauthenticated, but that the audit note *claimed* it had been checked. The claim is
+  fixed; the authentication is not.
+- **DEBT-02** 🟡 — worse, not better: `db.py` 777 → 933, `api.py` 411 → 508.
+- **TOOL-04** 🚧 — unchanged, and correctly so.
+
+## 20. Next highest-priority issue
+
+**OBS-08 — instrument the autonomous half.** Everything this cycle added lets the company
+act without a person present. Nothing this cycle added lets a person see it doing so, and
+the telemetry that does exist watches the one component that is *not* autonomous. Until
+queue depth, approval age, spend and unsettled receipts are exported and alerted, every
+guarantee above is one nobody would find out had failed.
+
+It is also small: the runtime already computes all four numbers, so this is an exporter and
+three alert rules, not a new subsystem.

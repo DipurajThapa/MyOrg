@@ -16,12 +16,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from runtime import triggers
 from runtime.auth import AuthError, TokenService, bearer_token
 from runtime.connectors import ConnectorError
 from runtime.db import Conflict, NotFound, Store, StoreError
 from runtime.gateway_auth import GatewayAuthenticator
 from runtime.observability import JsonFormatter, Metrics
 from runtime.service import Forbidden, MyOrgService, ServiceError
+from runtime.triggers import TriggerError
+
+WEBHOOK_SECRET_SUFFIX = "_WEBHOOK_SECRET"
 
 MAX_JSON_BYTES = 262_144
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
@@ -155,6 +159,31 @@ class MyOrgHandler(BaseHTTPRequestHandler):
             raise BadRequest("JSON body must be an object")
         return value
 
+    def _webhook(self, org_id: str, connector_id: str) -> None:
+        """Signed inbound event. Everything about this route is deliberately narrow: it does
+        no planning, spends no tokens, reads exactly one field of the payload, and answers
+        the same way whether the trigger is unknown or the signature is wrong -- so it
+        cannot be used to enumerate what this company listens for."""
+        if not RESOURCE_ID_RE.fullmatch(org_id) or not RESOURCE_ID_RE.fullmatch(connector_id):
+            raise BadRequest("invalid organization or connector id")
+        if not self.server.rate_limiter.allow(f"webhook:{org_id}:{connector_id}"):
+            raise TooManyRequests("rate limit exceeded")
+        self._actor_context = f"{org_id}:webhook:{connector_id}"
+        body = self._body_bytes()
+        secret = webhook_secret(self.server.store, org_id, connector_id)
+        try:
+            intake, created = triggers.receive_webhook(
+                self.server.store, org_id, connector_id, secret,
+                self.headers.get("X-MyOrg-Timestamp", ""), self.headers.get("X-MyOrg-Nonce", ""),
+                self.headers.get("X-MyOrg-Signature", ""), body)
+        except (ConnectorError, TriggerError, Conflict, NotFound) as error:
+            LOG.info(json.dumps({"event": "webhook.rejected", "org": org_id,
+                                 "connector": connector_id, "reason": str(error)},
+                                separators=(",", ":"), sort_keys=True))
+            raise WebhookDenied() from error
+        self._send(HTTPStatus.ACCEPTED if created else HTTPStatus.OK,
+                   {"accepted": True, "intake_id": intake["id"], "status": intake["status"]})
+
     def _route(self) -> tuple[list[str], str]:
         parsed = urlsplit(self.path)
         if parsed.query or parsed.fragment:
@@ -222,6 +251,12 @@ class MyOrgHandler(BaseHTTPRequestHandler):
                 self._send_text(HTTPStatus.OK, self.server.metrics.render(),
                                 "text/plain; version=0.0.4; charset=utf-8")
                 return
+            # The one route with no bearer token: an outside system cannot hold one. It
+            # authenticates by HMAC over the exact bytes instead, and is deliberately
+            # handled before `_principal` so a signature can never be mistaken for a login.
+            if method == "POST" and len(parts) == 4 and parts[:2] == ["v1", "webhooks"]:
+                self._webhook(parts[2], parts[3])
+                return
             principal = self._principal(method, path)
             if method == "GET" and path == "/v1/me":
                 self._send(HTTPStatus.OK, {"actor_id": principal.actor_id, "actor_type": principal.actor_type,
@@ -267,6 +302,36 @@ class MyOrgHandler(BaseHTTPRequestHandler):
                 return
             if method == "GET" and path == "/v1/connectors":
                 self._send(HTTPStatus.OK, self.server.service.connector_inventory(principal))
+                return
+            if method == "POST" and path == "/v1/connectors/execute":
+                result, created = self.server.service.execute_live(
+                    principal, self._json(), self._request_id("Idempotency-Key"))
+                self._send(HTTPStatus.CREATED if created else HTTPStatus.OK, result)
+                return
+            if method == "GET" and path == "/v1/connectors/in-flight":
+                self._send(HTTPStatus.OK, self.server.service.in_flight_receipts(principal))
+                return
+            if method == "POST" and path == "/v1/triggers/webhook":
+                result = self.server.service.register_webhook_trigger(
+                    principal, self._json(), self._request_id(), self.trace_id)
+                self._send(HTTPStatus.CREATED, result)
+                return
+            if path == "/v1/schedules":
+                if method == "GET":
+                    self._send(HTTPStatus.OK, self.server.service.schedules(principal))
+                    return
+                if method == "POST":
+                    result = self.server.service.create_schedule(
+                        principal, self._json(), self._request_id(), self.trace_id)
+                    self._send(HTTPStatus.CREATED, result)
+                    return
+            if method == "PUT" and len(parts) == 4 and parts[:2] == ["v1", "schedules"] \
+                    and parts[3] == "status":
+                if not RESOURCE_ID_RE.fullmatch(parts[2]):
+                    raise BadRequest("invalid schedule id")
+                result = self.server.service.set_schedule_enabled(
+                    principal, parts[2], self._json(), self._request_id(), self.trace_id)
+                self._send(HTTPStatus.OK, result)
                 return
             if method == "GET" and path == "/v1/connectors/unreconciled":
                 if not principal.has_role("system-admin", "auditor"):
@@ -345,6 +410,8 @@ class MyOrgHandler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.FORBIDDEN, "forbidden", str(error))
         except RouteNotFound:
             self._error(HTTPStatus.NOT_FOUND, "not_found", "route not found")
+        except WebhookDenied:
+            self._error(HTTPStatus.FORBIDDEN, "webhook_denied", "webhook was not accepted")
         except NotFound as error:
             self._error(HTTPStatus.NOT_FOUND, "not_found", str(error))
         except Conflict as error:
@@ -363,8 +430,27 @@ class MyOrgHandler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.INTERNAL_SERVER_ERROR, "internal_error", "request could not be completed")
 
 
+def webhook_secret(store: Store, org_id: str, connector_id: str) -> bytes:
+    """The inbound signing secret is a separate variable from the outbound bearer token: one
+    is what the provider proves to us, the other is what we prove to the provider, and
+    reusing one key for both would let either side forge the other's traffic."""
+    try:
+        connector = store.connector(org_id, connector_id)
+    except NotFound as error:
+        raise WebhookDenied() from error
+    reference = connector.get("secret_ref")
+    value = os.environ.get(f"{reference}{WEBHOOK_SECRET_SUFFIX}", "") if reference else ""
+    if not value:
+        raise WebhookDenied()
+    return value.encode("utf-8")
+
+
 class BadRequest(RuntimeError):
     pass
+
+
+class WebhookDenied(RuntimeError):
+    """One answer for every inbound rejection, so the route leaks nothing about what exists."""
 
 
 class PayloadTooLarge(RuntimeError):

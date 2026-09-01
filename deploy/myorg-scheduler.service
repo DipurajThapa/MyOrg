@@ -1,0 +1,42 @@
+[Unit]
+Description=MyOrg autonomous scheduler -- takes in triggered work and drives every run that can move
+After=network-online.target myorg-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=myorg
+Group=myorg
+WorkingDirectory=/opt/myorg
+EnvironmentFile=/etc/myorg/myorg.env
+# --supervised: an idle pass is the normal state of a company waiting for a trigger, so the
+# loop keeps waiting instead of exiting. The ceilings that matter are still per-pass and
+# per-run, inside the state machine.
+ExecStart=/opt/myorg/.venv/bin/python -m runtime.scheduler --supervised --interval 60
+# SIGTERM sets a stop flag and the current pass finishes; killing mid-sweep would strand a
+# step claimed by a process that no longer exists.
+KillSignal=SIGTERM
+TimeoutStopSec=300
+Restart=on-failure
+RestartSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/myorg
+
+[Install]
+WantedBy=multi-user.target

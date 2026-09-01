@@ -22,3 +22,9 @@ apichk-*/
 tmp*/
 runtime/runs/*.wf.json
 runtime/workspaces/
+# plans a trigger generated -- output, not source
+runtime/runs/*.planned.json
+# a redirected read model, only ever a test's
+runtime/runs/_read-model.db*
+# hand-taken database backups stay off the repository
+*.db.*.bak

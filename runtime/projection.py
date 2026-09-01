@@ -24,8 +24,20 @@ DB_ENV = "MYORG_DB"
 
 
 def default_db() -> Path:
-    """Resolved per call: tests and other organizations point elsewhere."""
-    return Path(os.environ.get(DB_ENV, ROOT / "runtime" / "data" / "myorg.db"))
+    """Where the read model lives. Resolved per call, never cached at import.
+
+    The store follows the runs it mirrors. `MYORG_RUNS_DIR` redirects the event log and the
+    audit log; before this it did *not* redirect the projection target, so a test sweeping
+    its own temporary runs still mirrored them into the company's real database -- ten
+    fabricated `sch-*` runs were found in it. A read model is only trustworthy if nothing
+    that is pretending can write to it, so the redirect now travels with the runs.
+    """
+    if os.environ.get(DB_ENV):
+        return Path(os.environ[DB_ENV])
+    runs = os.environ.get("MYORG_RUNS_DIR")
+    if runs:
+        return Path(runs) / "_read-model.db"
+    return ROOT / "runtime" / "data" / "myorg.db"
 
 
 RUNTIME_ACTOR = "runtime-projector"

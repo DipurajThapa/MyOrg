@@ -19,6 +19,10 @@ from runtime.db import Conflict, MIGRATIONS, Store, StoreError, utc_now
 from runtime.gateway_auth import GatewayAuthenticator
 from runtime.service import MyOrgService, ServiceError
 
+ROOT = Path(__file__).resolve().parents[1]
+ALL_MIGRATIONS = sorted(int(p.name.split("_", 1)[0])
+                        for p in (ROOT / "runtime" / "migrations").glob("[0-9][0-9][0-9]_*.sql"))
+
 SECRET = "0123456789abcdef0123456789abcdef"
 GATEWAY_SECRET = "gateway-0123456789abcdef0123456789abcdef"
 DOCUMENTS = {
@@ -45,7 +49,9 @@ class OperatorRuntime(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.path = Path(self.temporary.name) / "myorg.db"
         self.store = Store(self.path)
-        self.assertEqual(self.store.migrate(), [1, 2, 3, 4])
+        # Every migration on disk, applied in order -- checked against the directory rather
+        # than a hard-coded list, so adding one is a schema decision and not a test edit.
+        self.assertEqual(self.store.migrate(), ALL_MIGRATIONS)
         for org in ("acme", "other"):
             self.store.bootstrap_organization(org, org.title())
         self.store.upsert_actor("acme", "operator-one", "human", "Operator One", ["maker"])
@@ -203,8 +209,10 @@ class OperatorRuntime(unittest.TestCase):
             connection.execute("INSERT INTO schema_migrations VALUES(?,?,?,?)",
                                (1, migration.name, hashlib.sha256(migration.read_bytes()).hexdigest(), utc_now()))
             connection.commit()
-        self.assertEqual(Store(upgrade_path).migrate(), [2, 3, 4])
-        self.assertEqual(Store(upgrade_path).verify()["migrations"], 4)
+        # A store stopped at v1 catches up on everything after it, whatever that is today.
+        self.assertEqual(Store(upgrade_path).migrate(),
+                         [v for v in ALL_MIGRATIONS if v > 1])
+        self.assertEqual(Store(upgrade_path).verify()["migrations"], len(ALL_MIGRATIONS))
 
 
 class GatewayAPI(unittest.TestCase):

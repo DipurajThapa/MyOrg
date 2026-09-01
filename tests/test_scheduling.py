@@ -227,5 +227,158 @@ class SchedulingTest(unittest.TestCase):
                                                        log=self.logs.append).skipped)
 
 
+class SupervisedServiceTest(SchedulingTest):
+    """DEP-07: the loop as a service rather than a command.
+
+    As a command, "nothing can move" means the work is done and stopping is right. As a
+    service it means the company is waiting for a trigger, and stopping would end autonomy
+    until somebody opened a terminal -- which is the thing the service exists to avoid.
+    """
+
+    def test_a_supervised_loop_keeps_waiting_when_there_is_nothing_to_do(self):
+        slept: list[int] = []
+        passes = self.scheduler.serve(self.backend, interval=1, max_passes=3,
+                                      sleeper=slept.append, log=self.logs.append,
+                                      stop_when_idle=False)
+        self.assertEqual(passes, 3)
+        self.assertFalse(any("nothing left that can move" in line for line in self.logs))
+
+    def test_a_stop_request_ends_the_loop_between_passes_not_inside_one(self):
+        stopper = self.scheduler.Shutdown()
+        self.create("sch-signal")
+        passes = self.scheduler.serve(self.backend, interval=1, max_passes=0,
+                                      sleeper=lambda _s: stopper.request(),
+                                      log=self.logs.append, stop_when_idle=False,
+                                      shutdown=stopper)
+        self.assertEqual(passes, 1)
+        self.assertTrue(any("stop requested" in line for line in self.logs))
+        # The pass it was in still completed, so nothing is left half-driven.
+        self.assertIn("sch-signal", [r.run_id for r in self.health.all_health()])
+
+    def test_a_supervised_loop_has_no_pass_ceiling_but_still_stops_on_request(self):
+        stopper = self.scheduler.Shutdown()
+        counted = {"passes": 0}
+
+        def count_then_stop(_seconds):
+            counted["passes"] += 1
+            if counted["passes"] >= 5:
+                stopper.request()
+
+        passes = self.scheduler.serve(self.backend, interval=1, max_passes=0,
+                                      sleeper=count_then_stop, log=self.logs.append,
+                                      stop_when_idle=False, shutdown=stopper)
+        self.assertEqual(passes, 5)
+
+    def test_a_second_supervised_loop_refuses_to_start(self):
+        """Steps are fenced and schedules are fenced, so two loops cannot corrupt state --
+        but they can plan the same goal twice and pay for the same step twice. The common
+        way to get two is mundane: a unit restarting while an operator has one in a
+        terminal."""
+        with self.scheduler.single_instance():
+            with self.assertRaises(self.scheduler.AlreadyRunning):
+                with self.scheduler.single_instance():
+                    pass
+
+    def test_the_guard_is_released_when_the_loop_ends(self):
+        with self.scheduler.single_instance():
+            pass
+        with self.scheduler.single_instance():  # must not raise
+            pass
+
+    def test_a_one_shot_sweep_is_not_guarded(self):
+        """`--once` is an operator at a keyboard; refusing it because a service is running
+        would make the company impossible to inspect while it works."""
+        with self.scheduler.single_instance():
+            with self.scheduler.single_instance(enabled=False):
+                pass
+
+    def test_a_sweep_starts_nothing_new_unless_a_planner_is_supplied(self):
+        """The old contract, kept: every caller written before triggers existed still
+        gets a drive-only sweep."""
+        self.assertEqual(self.scheduler.sweep(self.backend, log=self.logs.append).started, [])
+
+    def test_a_sweep_never_mirrors_into_the_companys_real_database(self):
+        """Regression, found by reading production: ten fabricated `sch-*` runs from this
+        very test file had been mirrored into `runtime/data/myorg.db`. `MYORG_RUNS_DIR`
+        redirected the log but not the projection target, so anything pretending to be a
+        run could write to the operator's read model."""
+        import os
+        from runtime.projection import default_db
+        os.environ.pop("MYORG_DB", None)
+        resolved = default_db()
+        self.assertEqual(resolved.parent, Path(self._tmp.name),
+                         "the read model must follow MYORG_RUNS_DIR")
+        self.assertNotEqual(resolved.resolve(),
+                            (ROOT / "runtime" / "data" / "myorg.db").resolve())
+
+        self.create("sch-isolated")
+        self.scheduler.sweep(self.backend, log=self.logs.append)
+        real = ROOT / "runtime" / "data" / "myorg.db"
+        if real.is_file():
+            from runtime.db import Store
+            with Store(real).reading() as connection:
+                ids = [row["id"] for row in connection.execute("SELECT id FROM runs")]
+            self.assertNotIn("sch-isolated", ids)
+
+    def test_intake_is_a_no_op_without_a_store(self):
+        import os
+        from unittest.mock import patch
+        unasked = Path(self._tmp.name) / "absent.db"
+        os.environ.pop("MYORG_DB", None)
+        with patch("runtime.projection.default_db", return_value=unasked):
+            self.assertIsNone(self.scheduler.trigger_store())
+            self.assertEqual(self.scheduler.intake(object(), log=self.logs.append), [])
+        self.assertFalse(unasked.exists())
+
+
+class TriggeredSweepTest(SchedulingTest):
+    """A run that exists because the clock said so, driven in the same pass that made it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        import os
+        from datetime import timedelta
+
+        from runtime import triggers
+        from runtime.db import Store
+        self.triggers = triggers
+        target = Path(self._tmp.name) / "triggered.db"
+        os.environ["MYORG_DB"] = str(target)
+        os.environ["MYORG_ORG_ID"] = "acme"
+        self.addCleanup(os.environ.pop, "MYORG_DB", None)
+        self.addCleanup(os.environ.pop, "MYORG_ORG_ID", None)
+        self.store = Store(target)
+        self.store.migrate()
+        self.store.bootstrap_organization("acme", "Acme")
+        self.store.upsert_actor("acme", "chief", "human", "Chief", ["system-admin"])
+        self.store.create_schedule(
+            "acme", "hourly-sweep", "interval", "Review the open pipeline",
+            triggers.stamp(triggers.utc_now() - timedelta(minutes=1)), "chief",
+            "create-sched", "trace-1", interval_seconds=3600)
+
+    def test_the_clock_starts_a_run_and_the_same_sweep_drives_it(self):
+        from runtime.planner import StubPlannerBackend
+        result = self.scheduler.sweep(self.backend, log=self.logs.append,
+                                      planner_backend=StubPlannerBackend())
+        self.assertEqual(len(result.started), 1, "the clock should have started exactly one run")
+        started = result.started[0]
+        self.addCleanup(lambda: (ROOT / "runtime" / "workflows" / f"{started}.json")
+                        .unlink(missing_ok=True))
+        self.assertTrue(self.core.run_path(started).exists())
+        self.assertIn(started, result.driven, "a run created this pass should also move this pass")
+        self.assertIn("started 1", result.summary())
+
+    def test_a_second_sweep_does_not_start_the_same_work_again(self):
+        from runtime.planner import StubPlannerBackend
+        first = self.scheduler.sweep(self.backend, log=self.logs.append,
+                                     planner_backend=StubPlannerBackend())
+        for run_id in first.started:
+            self.addCleanup(lambda r=run_id: (ROOT / "runtime" / "workflows" / f"{r}.json")
+                            .unlink(missing_ok=True))
+        second = self.scheduler.sweep(self.backend, log=self.logs.append,
+                                      planner_backend=StubPlannerBackend())
+        self.assertEqual(second.started, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -18,6 +18,8 @@ from runtime.connectors import ConnectorError, FixtureConnectorGateway, WebhookV
 from runtime.db import Conflict, NotFound, Store, StoreError, restore_backup
 from runtime.service import Forbidden, MyOrgService, ServiceError
 
+ROOT = Path(__file__).resolve().parents[1]
+
 SECRET = "0123456789abcdef0123456789abcdef"
 REVISION = "a" * 64
 PAYLOAD_HASH = hashlib.sha256(b"approved fixture content").hexdigest()
@@ -39,7 +41,11 @@ class Foundation(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.store = Store(self.root / "myorg.db")
-        self.assertEqual(self.store.migrate(), [1, 2, 3, 4])
+        # Every migration on disk, applied in order -- checked against the directory rather
+        # than a hard-coded list, so adding one is a schema decision and not a test edit.
+        expected = sorted(int(p.name.split("_", 1)[0])
+                          for p in (ROOT / "runtime" / "migrations").glob("[0-9][0-9][0-9]_*.sql"))
+        self.assertEqual(self.store.migrate(), expected)
         self.store.bootstrap_organization("acme", "Acme")
         self.store.bootstrap_organization("other", "Other")
         self.store.upsert_actor("acme", "maker-agent", "agent", "Maker", ["maker", "chief-of-staff"])

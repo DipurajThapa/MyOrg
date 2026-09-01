@@ -201,6 +201,66 @@ class GateProducesAuditTest(unittest.TestCase):
         self.assertEqual(len(terminal), 1)
         self.assertEqual(terminal[0]["outcome"], "blocked")
 
+    def test_an_unverified_approver_is_recorded_as_unverified(self) -> None:
+        """The evidence layer must not assert what it did not check.
+
+        `approve --approver` is a free string that nothing authenticates. The note used to
+        read "approved by a named human" regardless, so the one record built to be
+        trustworthy was making an unverified claim in verified-sounding words.
+        """
+        import os as operating_system
+        from unittest.mock import patch
+        self.make_run("aud-unverified", "publish")
+        self.request("aud-unverified")
+        operating_system.environ.pop("MYORG_DB", None)
+        absent = Path(self._runs.name) / "no-store.db"
+        with patch("runtime.projection.default_db", return_value=absent):
+            self.core.approve(self.ns(run_id="aud-unverified", step="s1",
+                                      approver="whoever", approval_ref="ticket-99",
+                                      request_id="approve-unverified"))
+        granted = [e for e in self.entries() if e["approval"] == "granted"][-1]
+        self.assertIn("unverified", granted["note"])
+        self.assertNotIn("a named human", granted["note"])
+
+    def test_an_approver_who_is_not_a_registered_actor_is_named_as_such(self) -> None:
+        import os as operating_system
+        from unittest.mock import patch
+        from runtime.db import Store
+        store_path = Path(self._runs.name) / "identity.db"
+        store = Store(store_path)
+        store.migrate()
+        store.bootstrap_organization("default", "Default")
+        store.upsert_actor("default", "real-operator", "human", "Real", ["decision-owner"])
+        operating_system.environ.pop("MYORG_DB", None)
+
+        self.make_run("aud-stranger", "publish")
+        self.request("aud-stranger")
+        with patch("runtime.projection.default_db", return_value=store_path):
+            self.core.approve(self.ns(run_id="aud-stranger", step="s1",
+                                      approver="not-registered", approval_ref="ticket-98",
+                                      request_id="approve-stranger"))
+        note = [e for e in self.entries() if e["approval"] == "granted"][-1]["note"]
+        self.assertIn("not a registered actor", note)
+
+    def test_a_registered_human_is_recorded_as_verified(self) -> None:
+        import os as operating_system
+        from unittest.mock import patch
+        from runtime.db import Store
+        store_path = Path(self._runs.name) / "identity2.db"
+        store = Store(store_path)
+        store.migrate()
+        store.bootstrap_organization("default", "Default")
+        store.upsert_actor("default", "dipuraj", "human", "Dipuraj", ["decision-owner"])
+        operating_system.environ.pop("MYORG_DB", None)
+
+        self.make_run("aud-known", "publish")
+        self.request("aud-known")
+        with patch("runtime.projection.default_db", return_value=store_path):
+            self.core.approve(self.ns(run_id="aud-known", step="s1", approver="dipuraj",
+                                      approval_ref="ticket-97", request_id="approve-known"))
+        note = [e for e in self.entries() if e["approval"] == "granted"][-1]["note"]
+        self.assertIn("a registered active human", note)
+
     def test_the_gate_does_not_happen_if_it_cannot_be_logged(self) -> None:
         """Fail closed: an unwritable audit log must stop the gated transition."""
         os.environ["MYORG_AUDIT_LOG"] = str(Path(self._logdir.name))  # a directory, not a file

@@ -10,6 +10,13 @@ for you):
 
 Until a connector is authorized, its department degrades gracefully to offline mode.
 
+There are two ways a department reaches outside, and they are governed differently. **MCP
+connectors** (above) are how an agent reads. **The runtime's own connector gateway** is how
+the company *writes* — a registered manifest, a human authorization, an exact single-use
+approval, one attempt, and a receipt that can say "we do not know". Set that up with
+[docs/TRIGGERS-AND-LIVE-CONNECTORS.md](../docs/TRIGGERS-AND-LIVE-CONNECTORS.md); the same
+guide covers the schedules and signed webhooks that let work start without a person.
+
 ## Suggested connectors by department
 
 | Department | High-value connectors |

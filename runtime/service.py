@@ -11,9 +11,11 @@ from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from runtime import triggers
 from runtime.auth import Principal
 from runtime.connectors import FixtureConnectorGateway, action_digest
 from runtime.db import Store
+from runtime.live_gateway import LiveConnectorGateway
 
 ROOT = Path(__file__).resolve().parents[1]
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
@@ -53,6 +55,7 @@ class MyOrgService:
     def __init__(self, store: Store):
         self.store = store
         self.fixture_gateway = FixtureConnectorGateway(store)
+        self.live_gateway = LiveConnectorGateway(store)
 
     def create_run(self, principal: Principal, body: dict, request_id: str) -> tuple[dict, bool]:
         _require(principal, "chief-of-staff", "system-admin")
@@ -176,6 +179,86 @@ class MyOrgService:
             principal.org_id, body["connector_id"], body["action"], body["target_ref"], body["payload_ref"],
             body["payload_sha256"], body["approval_id"], principal.actor_id, idempotency_key,
         )
+
+    def execute_live(self, principal: Principal, body: dict, idempotency_key: str) -> tuple[dict, bool]:
+        """A real outward write. Same admission as the fixture path, plus a settlement that
+        can say "we do not know" -- which is the only honest answer to a timeout."""
+        _require(principal, "connector-gateway")
+        if principal.actor_type not in {"agent", "service"}:
+            raise Forbidden("connector execution requires a service identity")
+        required = {"connector_id", "action", "target_ref", "payload_ref", "payload_sha256",
+                    "approval_id", "payload"}
+        if set(body) != required:
+            raise ServiceError("connector request must contain exactly the documented fields")
+        if not isinstance(body["payload"], dict):
+            raise ServiceError("connector payload must be a JSON object")
+        return self.live_gateway.execute(
+            principal.org_id, body["connector_id"], body["action"], body["target_ref"],
+            body["payload_ref"], body["payload_sha256"], body["approval_id"], principal.actor_id,
+            idempotency_key, body["payload"])
+
+    def in_flight_receipts(self, principal: Principal) -> list[dict]:
+        """Calls that left and never resolved. Nothing retries these; a person decides."""
+        _require(principal, "system-admin", "auditor", "chief-of-staff")
+        return self.store.in_flight_connector_receipts(principal.org_id)
+
+    # --- triggers: what may start work when nobody is at the keyboard --------------------
+
+    def register_webhook_trigger(self, principal: Principal, body: dict,
+                                 request_id: str, trace_id: str) -> dict:
+        _require(principal, "system-admin")
+        if principal.actor_type != "human":
+            raise Forbidden("registering a trigger requires a registered human identity")
+        if set(body) != {"connector_id", "event_type", "goal", "enabled"} \
+                or type(body["enabled"]) is not bool:
+            raise ServiceError("trigger requires connector_id, event_type, goal and enabled")
+        if not ID_RE.fullmatch(str(body["connector_id"])) \
+                or not triggers.EVENT_TYPE_RE.fullmatch(str(body["event_type"])):
+            raise ServiceError("connector_id and event_type must be slugs")
+        goal = str(body["goal"]).strip()
+        if not 1 <= len(goal) <= 500:
+            raise ServiceError("goal must be 1..500 characters")
+        return self.store.register_webhook_trigger(
+            principal.org_id, body["connector_id"], body["event_type"], goal,
+            body["enabled"], principal.actor_id, request_id, trace_id)
+
+    def create_schedule(self, principal: Principal, body: dict, request_id: str, trace_id: str) -> dict:
+        _require(principal, "system-admin")
+        if principal.actor_type != "human":
+            raise Forbidden("creating a schedule requires a registered human identity")
+        if set(body) != {"id", "kind", "interval_seconds", "daily_at", "goal"}:
+            raise ServiceError("schedule requires id, kind, interval_seconds, daily_at and goal")
+        if not ID_RE.fullmatch(str(body["id"])) or body["kind"] not in {"interval", "daily"}:
+            raise ServiceError("schedule id must be a slug and kind must be interval or daily")
+        goal = str(body["goal"]).strip()
+        if not 1 <= len(goal) <= 500:
+            raise ServiceError("goal must be 1..500 characters")
+        interval, daily = body["interval_seconds"], body["daily_at"]
+        if body["kind"] == "interval" and (type(interval) is not int or daily is not None):
+            raise ServiceError("interval schedules need interval_seconds and a null daily_at")
+        if body["kind"] == "daily" and (interval is not None or not isinstance(daily, str)):
+            raise ServiceError("daily schedules need daily_at and a null interval_seconds")
+        try:
+            following = triggers.next_fire(body["kind"], triggers.utc_now(), interval, daily)
+        except triggers.TriggerError as error:
+            raise ServiceError(str(error)) from error
+        return self.store.create_schedule(
+            principal.org_id, body["id"], body["kind"], goal, triggers.stamp(following),
+            principal.actor_id, request_id, trace_id, interval, daily)
+
+    def schedules(self, principal: Principal) -> list[dict]:
+        _require(principal, "system-admin", "auditor", "chief-of-staff")
+        return self.store.schedules(principal.org_id)
+
+    def set_schedule_enabled(self, principal: Principal, schedule_id: str, body: dict,
+                             request_id: str, trace_id: str) -> dict:
+        _require(principal, "system-admin")
+        if principal.actor_type != "human":
+            raise Forbidden("pausing or resuming a schedule requires a registered human identity")
+        if set(body) != {"enabled"} or type(body["enabled"]) is not bool:
+            raise ServiceError("schedule status requires exactly one boolean enabled field")
+        return self.store.set_schedule_enabled(principal.org_id, schedule_id, body["enabled"],
+                                               principal.actor_id, request_id, trace_id)
 
     def connector_inventory(self, principal: Principal) -> list[dict]:
         _require(principal, "system-admin", "auditor", "chief-of-staff")

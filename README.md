@@ -65,7 +65,15 @@ defaults, hard rules, red-flag checks, and its own test suite:
 | **Revenue engine** | `lead-response` (speed-to-lead under SLA) · `ar-collections` (dunning, failed payments) · `renewals-retention` (health, saves, expansion) · `deal-desk` (discount guardrails) · `funnel-attribution` (stages, handoff SLAs, attribution) · `demand-gen` (paid ads, nurture, referral) · `kpi-tree` (north-star metrics, LTV/CAC, leak sweeps) |
 | **Trust & compliance** | `grc-readiness` (SOC2/ISO, questionnaires, access reviews) · `privacy-program` (DSR clocks, breach runbook) · `contract-lifecycle` (auto-renew traps, obligations) · `reputation-management` (reviews, crisis comms) |
 
-Every production gap and its status is tracked in [docs/GAP-LEDGER.md](docs/GAP-LEDGER.md).
+The company can now be woken by something other than a person: a signed webhook or its own
+clock starts a run, and the scheduler runs as a supervised service. A live connector can reach
+a real external system, and reports honestly when a call left and never came back. How to set
+all of that up — and what the three connector outcomes mean — is in
+[docs/TRIGGERS-AND-LIVE-CONNECTORS.md](docs/TRIGGERS-AND-LIVE-CONNECTORS.md).
+
+Every production gap and its current, evidence-checked status is tracked in
+[docs/AUTONOMY-AUDIT-2026-09-01-REV2.md](docs/AUTONOMY-AUDIT-2026-09-01-REV2.md); the older
+[docs/GAP-LEDGER.md](docs/GAP-LEDGER.md) keeps the 2026-08-06 reasoning.
 A governed six-document project intake, Six Sigma value-stream map, bidirectional data contract,
 customer journey, and honest release gate live in
 [docs/PROJECT-INTAKE-AND-PRODUCTION-LOOP.md](docs/PROJECT-INTAKE-AND-PRODUCTION-LOOP.md) and

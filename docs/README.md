@@ -12,6 +12,7 @@
 | Document | What it is |
 |---|---|
 | [OPERATIONS-RUNBOOK.md](OPERATIONS-RUNBOOK.md) | Day-to-day operation: starting the service, backups, maintenance, what to do when something stops. |
+| [TRIGGERS-AND-LIVE-CONNECTORS.md](TRIGGERS-AND-LIVE-CONNECTORS.md) | Running the loop as a service, registering schedules and signed webhooks, and reaching a real external system — including what to do when a call left and never came back. |
 | [UAT-DEPLOYMENT-AND-ROLLBACK.md](UAT-DEPLOYMENT-AND-ROLLBACK.md) | The deployment and rollback drill. Written, not yet executed. |
 | [PROJECT-INTAKE-AND-PRODUCTION-LOOP.md](PROJECT-INTAKE-AND-PRODUCTION-LOOP.md) | The governed six-document intake and the value-stream loop the Control Center's intake screen implements. |
 
