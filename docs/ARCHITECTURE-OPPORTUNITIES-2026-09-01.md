@@ -242,7 +242,30 @@ that can say *not supported*, and is written to be able to disprove the claim.
 A-01's ceiling (a cold run genuinely costs more, and a ceiling that ignores that will park
 the first run of the day unfairly).
 
-### A-06 — Executor mutations are replay-safe (WF-13)
+### A-06 — Executor mutations are replay-safe (WF-13) — **applied**
+
+**Two things the plan got wrong, both found by building it:**
+
+1. **Ten call sites, not two.** `executor` (5), `checking` (2), `agent_api` (2),
+   `leases` (1). The plan said "derive the id from (run, step, attempt)"; had that been done
+   literally, every one of those distinct transitions would have shared a name on a given
+   attempt, and the idempotency layer would have swallowed all but the first. The id needs
+   the **verb**.
+2. **Actors collide too, and a test caught it.** With one scheme for everyone, an outside
+   worker claiming a step the driver had already parked was answered with *the driver's
+   earlier result* — a 200 saying "claimed" where the gated step had earned a 409. The
+   `agent_api` therefore keeps unique ids on purpose: a different actor's request is not a
+   replay of the driver's. That distinction is now documented at both definitions, because
+   the next person will otherwise "unify" them.
+
+**What it does and does not buy.** It makes WF-04's idempotent replay reachable, so a driver
+that crashes and is swept again re-applies *the same* mutation instead of a second one. It
+does **not** stop the re-dispatch that preceded the write — that is spend, and spend is A-01.
+The original WF-13 note implied otherwise; it was overstated.
+
+Five tests in `tests/test_executor.py`, including the two collisions above and the
+unreadable-step fallback (unique, never shared — a wrong shared name would swallow a real
+mutation).
 
 **Problem.** `request_id()` mints a uuid per call, so WF-04's idempotency can never fire on
 the autonomous path. A crash-and-resweep re-dispatches and re-pays.
@@ -500,7 +523,7 @@ validation (§6) has passed.
 |---|---|---|---|---|---|---|---|---|---|
 | **A-01** | Per-run and per-org cost ceiling, parking via `hold` | Spend is uncapped; `max_cycles` bounds mutations, not money | Real-model run: 3 retries × full model calls, no ceiling **[V]** | Only uncapped path to real loss | A-06 for honest accounting | Token usage may be unavailable | **Does `claude -p` report usage?** | **P0** | Proposed — gated |
 | **A-05** | Budget extension, generic over cycles and cost | `blocked_cycle_limit` is terminal, strands work, silent re-drive | Probe P3 **[V]** | Removes a dead end; prevents A-01 duplicating it | — | Two budgets, one vocabulary | Extension must not re-dispatch finished steps | **P1** | Proposed — design with A-01 |
-| **A-06** | `request_id` from (run, step, attempt) | WF-04 replay protection unreachable on the autonomous path | Probe P6 **[V]** | Closes a double-spend leak | — | Collision across attempts | Crash-and-resweep produces one dispatch | **P1** | Proposed — ready |
+| **A-06** | `request_id` from (step, attempt, **verb**) | WF-04 replay protection was unreachable on the autonomous path | Probe P6 **[V]**; ten call sites found, not the two assumed | Makes replay protection reachable. **Protects the write, not the spend** — re-dispatch is A-01's problem | — | Two collisions found while building: verbs, and **actors** (a worker's claim answered with the driver's result) | Done — 5 tests in `test_executor.py` | ~~P1~~ | **✅ Applied** |
 | **A-04** | Run retrospective → memory → planner recall | Run N+1 is exactly as good as run N | `propose_lesson` is the only runtime writer **[V-static]** | Compounding; execution → improvement | Memory recall quality | Teaches the planner to be confidently wrong | Recall precision at 50 entries | **P1** | Proposed — validate recall first |
 | **A-09** | Trim the dispatch context profile | A dispatch inherited the operator's own MCP connectors, and paid to load skills no grant lets it invoke | **Measured:** $0.5074 → $0.4258 warm, quality 6/6 **[V]**. `Skill` is in no grant; the repo ships no `.mcp.json` | ~16% off every dispatch — but the real win is **containment**: a finance step no longer inherits somebody's inbox | — | — | Done — §6.1; 3 tests in `test_tools.py` | ~~P1~~ | **✅ Applied** — `DISPATCH_PROFILE` in `backends.py` |
 | **A-10** | ~~Keep the cache warm~~ | A cold call costs 4.78× a warm one | **Measured [V]:** back-to-back calls stay warm ($1.2007 → $0.2514 × 5), but warmth **dies after ~10 min idle** (§6.3) — so most runs pay cold anyway | **Its value is stopping a wrong optimisation.** Nobody should build a cache-warming keepalive: it would burn money continuously to save it occasionally | — | — | Done — §6.2, §6.3 | ~~P1~~ | **Closed — investigated, build nothing** |

@@ -72,21 +72,43 @@ def write_evidence(run_id: str, step_id: str, text: str, label: str = "") -> str
     return str(path.resolve().relative_to(ROOT)).replace("\\", "/")
 
 
-def request_id(step_id: str) -> str:
-    return f"exec-{step_id}-{uuid.uuid4().hex[:12]}"
+def request_id(run_id: str, step_id: str, verb: str) -> str:
+    """A name for one mutation, derived from the work rather than from the clock.
+
+    WF-13: this used to mint a uuid per call, so WF-04's idempotent replay could never fire
+    on the autonomous path -- the same mutation applied twice looked like two different
+    ones. Deriving it from (step, attempt, verb) means a driver that crashes and is swept
+    again re-applies *the same* mutation, which the state machine then recognises and
+    swallows.
+
+    The verb is not decoration. Seven call sites share this function and each performs a
+    different transition; without it, `claim` and `complete` on one attempt would collide
+    and the second would be silently dropped as a replay of the first.
+
+    What this does not fix: re-dispatching the model. The id protects the *write*, not the
+    spend that preceded it -- that needs a record of the dispatch itself, which is A-01's
+    territory, not this one.
+    """
+    try:
+        attempt = current_state(run_id)["steps"][step_id].get("attempts", 0)
+    except (SystemExit, KeyError):
+        # A step that cannot be read has no attempt to name. Fall back to something unique
+        # rather than something wrong: a collision here would swallow a real mutation.
+        return f"exec-{step_id}-{uuid.uuid4().hex[:12]}"
+    return f"exec-{step_id}-a{attempt}-{verb}"
 
 
 def claim(run_id: str, step_id: str, owner: str) -> str:
     """Move a ready step into whatever the policy says comes next. Returns that status."""
     return quietly(core.request_step, namespace(
         run_id=run_id, step=step_id, actor=owner, holder=HOLDER,
-        request_id=request_id(step_id)))
+        request_id=request_id(run_id, step_id, "claim")))
 
 
 def take(run_id: str, step_id: str, owner: str) -> None:
     """Pick up an in-progress step nobody is holding -- the human-approved case."""
     quietly(core.take, namespace(run_id=run_id, step=step_id, actor=owner,
-                                 holder=HOLDER, request_id=request_id(step_id)))
+                                 holder=HOLDER, request_id=request_id(run_id, step_id, "take")))
 
 
 def token_for(run_id: str, step_id: str) -> str | None:
@@ -211,7 +233,7 @@ def finish(run_id: str, step_id: str, owner: str, evidence: str, revision: str) 
     return quietly(core.complete, namespace(
         run_id=run_id, step=step_id, actor=owner, evidence=evidence,
         revision=revision, claim_token=token_for(run_id, step_id),
-        request_id=request_id(step_id)))
+        request_id=request_id(run_id, step_id, "complete")))
 
 
 def record_failure(run_id: str, step_id: str, owner: str, reason: str) -> None:
@@ -220,7 +242,7 @@ def record_failure(run_id: str, step_id: str, owner: str, reason: str) -> None:
         quietly(core.fail, namespace(run_id=run_id, step=step_id, actor=owner,
                                      reason=reason[:200],
                                      claim_token=token_for(run_id, step_id),
-                                     request_id=request_id(step_id)))
+                                     request_id=request_id(run_id, step_id, "fail")))
     except SystemExit as error:
         raise ExecutorError(f"could not record failure on {step_id}: {error}") from error
 
@@ -233,7 +255,7 @@ def hold_for_human(run_id: str, step_id: str, owner: str, output: str,
         quietly(core.hold, namespace(run_id=run_id, step=step_id, actor=owner,
                                      evidence=artifact, reason=reason[:200],
                                      claim_token=token_for(run_id, step_id),
-                                     request_id=request_id(step_id)))
+                                     request_id=request_id(run_id, step_id, "hold")))
     except SystemExit as error:
         raise ExecutorError(f"could not hold {step_id}: {error}") from error
     log(f"  {step_id}: quality gate could not run -- {reason}; held for a human ({artifact})")
@@ -367,6 +389,7 @@ if __name__ == "__main__":
 
 def drive_check(run_id: str, step_id: str, state: dict, backend, log) -> None:
     """Run one independent review, lending `checking` the runtime helpers it needs."""
+    # `checking` names its own mutations but should not have to know the run id to do it.
     _drive_check(run_id, step_id, state, backend, log,
-                 write_evidence=write_evidence, quietly=quietly,
-                 namespace=namespace, request_id=request_id)
+                 write_evidence=write_evidence, quietly=quietly, namespace=namespace,
+                 request_id=lambda step, verb: request_id(run_id, step, verb))

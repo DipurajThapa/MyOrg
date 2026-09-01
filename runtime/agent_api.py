@@ -12,6 +12,7 @@ import hmac
 import json
 import os
 import sys
+import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,7 +23,7 @@ from runtime import company_runtime as core  # noqa: E402
 from runtime import leases  # noqa: E402
 from runtime.executor import (acceptance_failure, current_state,  # noqa: E402
                               hold_for_human, namespace, quietly,
-                              record_failure, request_id, write_evidence)
+                              record_failure, write_evidence)
 from runtime.backends import ExecutorError  # noqa: E402
 from runtime.health import all_health  # noqa: E402
 from runtime.prompts import (StepRequest, agent_brief, structural_failure)  # noqa: E402
@@ -82,6 +83,19 @@ def open_work(agent: str | None = None) -> list[dict]:
                            "owner": step["owner"], "action": step["action"],
                            "risk": step["risk"], "goal": state["goal"]})
     return offers
+
+
+def request_id(step_id: str) -> str:
+    """A fresh name for every call from outside, deliberately unlike the driver's.
+
+    The executor derives its ids from (step, attempt, verb) so a crash-and-resweep replays
+    the *same* mutation instead of applying a second one. That is right for one actor
+    retrying its own work, and wrong here: an outside worker is a different actor, and its
+    claim is not a replay of the driver's claim on the same step. Sharing the scheme let
+    the idempotency layer answer a worker's request with the driver's earlier result --
+    turning a refusal a gated step had earned into an apparent success.
+    """
+    return f"api-{step_id}-{uuid.uuid4().hex[:12]}"
 
 
 def holder_for(agent: str) -> str:

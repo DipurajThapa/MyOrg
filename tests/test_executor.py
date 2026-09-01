@@ -441,6 +441,53 @@ class ExecutorTest(unittest.TestCase):
         self.assertFalse(brief.startswith("---"))
         self.assertTrue(brief)
 
+    # --- replay safety (A-06 / WF-13) ------------------------------------------------
+
+    def test_the_same_mutation_asked_for_twice_has_the_same_name(self) -> None:
+        """WF-13: ids were a uuid per call, so WF-04's idempotent replay could never fire
+        on the autonomous path -- a driver that crashed and was swept again applied the
+        mutation a second time instead of being recognised as repeating the first."""
+        self.create_run("exec-replay")
+        first = self.executor.request_id("exec-replay", "frame-goal", "claim")
+        second = self.executor.request_id("exec-replay", "frame-goal", "claim")
+        self.assertEqual(first, second)
+
+    def test_different_transitions_on_one_attempt_are_named_differently(self) -> None:
+        """The collision this scheme must not cause. Seven call sites share the helper;
+        without the verb, `claim` and `complete` on one attempt would look like the same
+        mutation and the second would be silently swallowed as a replay."""
+        self.create_run("exec-verbs")
+        names = {verb: self.executor.request_id("exec-verbs", "frame-goal", verb)
+                 for verb in ("claim", "take", "complete", "fail", "hold")}
+        self.assertEqual(len(set(names.values())), len(names), names)
+
+    def test_a_later_attempt_is_a_new_mutation_not_a_replay_of_the_last(self) -> None:
+        """A retry must actually apply. If attempt number were left out, the second
+        attempt's completion would replay the first's and the retry would vanish."""
+        self.create_run("exec-attempts")
+        before = self.executor.request_id("exec-attempts", "frame-goal", "complete")
+        self.executor.claim("exec-attempts", "frame-goal", "chief-of-staff")
+        after = self.executor.request_id("exec-attempts", "frame-goal", "complete")
+        self.assertNotEqual(before, after)
+
+    def test_an_unreadable_step_gets_a_unique_name_rather_than_a_wrong_one(self) -> None:
+        """Falling back to a shared name would swallow a real mutation. Unique is the
+        safe direction when the attempt cannot be read."""
+        one = self.executor.request_id("no-such-run", "no-such-step", "claim")
+        two = self.executor.request_id("no-such-run", "no-such-step", "claim")
+        self.assertNotEqual(one, two)
+
+    def test_an_outside_worker_does_not_share_the_drivers_naming(self) -> None:
+        """Found by a failing test: with one scheme, a worker's claim on a step the driver
+        had already parked was answered with the driver's earlier result -- turning a
+        refusal the gated step had earned into an apparent success."""
+        from runtime import agent_api
+        self.create_run("exec-actors")
+        driver = self.executor.request_id("exec-actors", "frame-goal", "claim")
+        worker = agent_api.request_id("frame-goal")
+        self.assertNotEqual(driver, worker)
+        self.assertNotEqual(worker, agent_api.request_id("frame-goal"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -139,7 +139,7 @@ def reclaim(now=None, log=print) -> list[str]:
             quietly(core.fail, namespace(
                 run_id=lease.run_id, step=lease.step_id, actor=lease.agent,
                 reason=f"lease expired -- {lease.agent} stopped responding",
-                request_id=request_id(lease.step_id)))
+                request_id=request_id(lease.run_id, lease.step_id, "reclaim")))
         except SystemExit as error:
             log(f"  could not reclaim {lease.key}: {error}")
             continue

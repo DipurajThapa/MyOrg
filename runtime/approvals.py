@@ -156,7 +156,8 @@ def decide(run_id: str, step_id: str, approve: bool, approver: str, note: str) -
     command = core.approve if approve else core.reject
     return quietly(command, namespace(
         run_id=run_id, step=step_id, approver=approver.strip(),
-        approval_ref=note.strip(), request_id=request_id(step_id)))
+        approval_ref=note.strip(),
+        request_id=request_id(run_id, step_id, "approve" if approve else "reject")))
 
 
 def render(decisions: list[Decision]) -> str:

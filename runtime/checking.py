@@ -48,7 +48,7 @@ def send_verdict(run_id, step_id, step, verdict, review, quietly, namespace,
         kind="decision" if verdict == "APPROVE" else "feedback",
         subject=f"Check {verdict.lower()} for {step_id}"[:120],
         payload=review, classification="internal",
-        reply_to=None, request_id=request_id(step_id)))
+        reply_to=None, request_id=request_id(step_id, "verdict-message")))
     return identifier
 
 
@@ -94,7 +94,7 @@ def drive_check(run_id, step_id, state, backend, log, *,
                                   quietly, namespace, request_id)
         result = quietly(getattr(core, CHECK_COMMANDS[verdict]), namespace(
             run_id=run_id, step=step_id, actor=checker,
-            message_id=identifier, request_id=request_id(step_id)))
+            message_id=identifier, request_id=request_id(step_id, f"check-{verdict.lower()}")))
     except SystemExit as error:
         raise ExecutorError(f"could not record check on {step_id}: {error}") from error
     log(f"  {step_id}: {checker} says {verdict} -> {review} ({result})")
