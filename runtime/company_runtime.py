@@ -22,7 +22,12 @@ POLICY_PATH = ROOT / "runtime" / "policy.json"
 DEFAULT_ORG = os.environ.get("MYORG_ORG_ID", "default")
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 TERMINAL = {"completed", "rejected", "blocked_human", "blocked_retry_limit"}
-TERMINAL_RUN = TERMINAL | {"blocked_cycle_limit", "blocked_review_limit", "cancelled"}
+# Every run_status a run can end in. The one list: health, escalation and the projection
+# derive from it and a test holds them to it, so a new end state cannot read as "running".
+TERMINAL_RUN = TERMINAL | {"blocked_cycle_limit", "blocked_review_limit",
+                           "rejected_by_checker", "cancelled"}
+# Step statuses that mean "a person has to act". Shared for the same reason.
+WAITING_STEP = {"awaiting_approval", "blocked_human"}
 CLAIM_SECONDS = int(os.environ.get("MYORG_CLAIM_SECONDS", "600"))
 MESSAGE_KINDS = {"handoff", "question", "answer", "feedback", "decision"}
 CLASSIFICATIONS = {"public", "internal", "confidential"}
@@ -272,6 +277,10 @@ def create_run(args) -> None:
         for step in workflow["steps"]:
             states[step["id"]] = {"status":"ready" if not step.get("depends_on") else "pending", "attempts":0, "owner":step["owner"], "checker":step.get("checker"), "review_cycles":0, "max_review_cycles":step.get("max_review_cycles",0), "submissions":[], "action":step["action"], "risk":policy()[step["action"]], "max_attempts":step["max_attempts"], "depends_on":step.get("depends_on", []), "holder":"", "claim_token":"", "claim_expires_at":""}
         state = {"seq":1,"event":"run.created","target":run_id,"request_id":args.request_id,"actor":args.actor,"ts":now(),"run_id":run_id,"org_id":getattr(args,"org",None) or DEFAULT_ORG,"workflow_id":workflow["id"],"workflow_revision":revision(workflow),"goal":workflow["goal"],"max_cycles":workflow["max_cycles"],"cycle_count":0,"run_status":"active","messages":[],"steps":states}
+        # B-04: a planned run was paid for before it existed. Seed the figure the ceiling
+        # reads so the plan is the first line of the bill, not a call nobody counted.
+        planned = round(float(getattr(args, "spend", 0.0) or 0.0), 6)
+        if planned > 0: state.update(spend_usd=planned, planning_spend_usd=planned)
         append_event(run_id, state)
         snapshot = RUNS / f"{run_id}.workflow.json"
         snapshot.write_bytes(canonical(workflow) + b"\n")
@@ -343,6 +352,23 @@ def take(args) -> None:
         mint_claim(state, step, args.holder)
     state = mutate(args.run_id,args.request_id,"step.taken",args.actor,args.step,change)
     print(state["steps"][args.step]["claim_token"])
+
+
+def renew_claim(args) -> None:
+    """The holder says it is still working; the claim lives another CLAIM_SECONDS.
+
+    B-01. This is the heartbeat, and it is a mutation on purpose: the claim on the step is
+    the *only* record of who holds it. A second record kept elsewhere (the old lease file)
+    could say "alive" while this one said "expired", and the driver believed this one."""
+    def change(state):
+        step = state["steps"].get(args.step)
+        if not step or step["status"] != "in_progress": raise SystemExit(f"step is not in progress: {args.step}")
+        if not claim_is_live(step) or step.get("holder") != args.holder:
+            raise SystemExit(f"{args.holder} does not hold {args.step}")
+        check_claim(step, args.claim_token)
+        step["claim_expires_at"] = stamp(CLAIM_SECONDS)
+    state = mutate(args.run_id, args.request_id, "claim.renewed", args.holder, args.step, change)
+    print(state["steps"][args.step]["claim_expires_at"])
 
 
 def expire_claim(args) -> None:
@@ -420,6 +446,11 @@ def charge(state: dict, step: dict, args) -> None:
     Consequence worth knowing: a dispatch that dies before any of those three transitions is
     not counted. That undercounts, never over -- and undercounting is the safe direction for
     a figure a ceiling is read from, because the ceiling then trips late rather than early.
+
+    What rides here (B-04, measured 2026-09-03): the maker's call and its grade on
+    complete/fail/hold; the checker's review on check-approve/return/reject; the planner's
+    attempts as a seed at create_run. Not charged: the approval brief (see `briefing`), and
+    the last dispatch of a cancelled run (its transition is refused).
     """
     amount = round(float(getattr(args, "spend", 0.0) or 0.0), 6)
     if amount <= 0:
@@ -584,6 +615,7 @@ def check_approve(args) -> None:
         verify_submission(step)
         step.update(status="completed",checked_by=args.actor,check_message=args.message_id)
         checker_message(state,args.step,args.message_id,args.actor,"decision")
+        charge(state, step, args)  # B-04: the review call is half the bill on a RETURN loop
         release_dependents(state)
     state=mutate(args.run_id,args.request_id,"check.approved",args.actor,args.step,change); print(state["run_status"])
 
@@ -593,7 +625,7 @@ def check_return(args) -> None:
         step=state["steps"].get(args.step)
         if not step or step["status"] != "awaiting_check": raise SystemExit(f"step is not awaiting check: {args.step}")
         if args.actor != step.get("checker"): raise SystemExit(f"step checker is {step.get('checker')}, not {args.actor}")
-        verify_submission(step); checker_message(state,args.step,args.message_id,args.actor)
+        verify_submission(step); checker_message(state,args.step,args.message_id,args.actor); charge(state, step, args)
         if step["review_cycles"] >= step["max_review_cycles"]:
             step["status"]="blocked_review_limit"; state["run_status"]="blocked_review_limit"
         else:
@@ -606,7 +638,7 @@ def check_reject(args) -> None:
         step=state["steps"].get(args.step)
         if not step or step["status"] != "awaiting_check": raise SystemExit(f"step is not awaiting check: {args.step}")
         if args.actor != step.get("checker"): raise SystemExit(f"step checker is {step.get('checker')}, not {args.actor}")
-        verify_submission(step); checker_message(state,args.step,args.message_id,args.actor)
+        verify_submission(step); checker_message(state,args.step,args.message_id,args.actor); charge(state, step, args)
         step.update(status="rejected_by_checker",last_feedback_message=args.message_id); state["run_status"]="rejected_by_checker"
     mutate(args.run_id,args.request_id,"check.rejected",args.actor,args.step,change); print("rejected_by_checker")
 
@@ -639,9 +671,10 @@ def parser():
         command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--approver",required=True); command.add_argument("--approval-ref",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=func)
     command=commands.add_parser("send-message"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("message_id"); command.add_argument("--from-agent",required=True); command.add_argument("--to-agent",required=True); command.add_argument("--kind",required=True,choices=sorted(MESSAGE_KINDS)); command.add_argument("--subject",required=True); command.add_argument("--payload",required=True); command.add_argument("--classification",required=True,choices=sorted(CLASSIFICATIONS)); command.add_argument("--reply-to"); command.add_argument("--request-id",required=True); command.set_defaults(func=send_message)
     for name,func in (("check-approve",check_approve),("check-return",check_return),("check-reject",check_reject)):
-        command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor",required=True); command.add_argument("--message-id",required=True); command.add_argument("--request-id",required=True)
+        command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor",required=True); command.add_argument("--message-id",required=True); command.add_argument("--request-id",required=True); command.add_argument("--spend",type=float,default=0.0)
         command.set_defaults(func=func)
     command=commands.add_parser("expire-claim"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor"); command.add_argument("--request-id",required=True); command.set_defaults(func=expire_claim)
+    command=commands.add_parser("renew-claim"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--holder",required=True); command.add_argument("--claim-token",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=renew_claim)
     command=commands.add_parser("extend-budget"); command.add_argument("run_id"); command.add_argument("--cycles",type=int,required=True); command.add_argument("--approver",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=extend_budget)
     command=commands.add_parser("cancel-run"); command.add_argument("run_id"); command.add_argument("--approver",required=True); command.add_argument("--reason",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=cancel_run)
     command=commands.add_parser("status"); command.add_argument("run_id"); command.add_argument("--json",action="store_true"); command.set_defaults(func=status)

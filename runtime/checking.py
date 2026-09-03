@@ -93,8 +93,11 @@ def drive_check(run_id, step_id, state, backend, log, *,
         identifier = send_verdict(run_id, step_id, step, verdict, review,
                                   quietly, namespace, request_id)
         result = quietly(getattr(core, CHECK_COMMANDS[verdict]), namespace(
-            run_id=run_id, step=step_id, actor=checker,
-            message_id=identifier, request_id=request_id(step_id, f"check-{verdict.lower()}")))
+            run_id=run_id, step=step_id, actor=checker, message_id=identifier,
+            # The review is one model call per cycle -- as many as the maker's own on a
+            # RETURN loop -- and rides the verdict the way a dispatch rides `complete`.
+            spend=float(getattr(output, "cost_usd", 0.0) or 0.0),
+            request_id=request_id(step_id, f"check-{verdict.lower()}")))
     except SystemExit as error:
         raise ExecutorError(f"could not record check on {step_id}: {error}") from error
     log(f"  {step_id}: {checker} says {verdict} -> {review} ({result})")

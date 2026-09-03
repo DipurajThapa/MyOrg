@@ -225,7 +225,8 @@ class ApiGradingTest(unittest.TestCase):
         self.core.create_run(self.ns(workflow=str(path), run_id="api-grade",
                                      actor="chief-of-staff", request_id="create-api-grade",
                                      org="default"))
-        self.api.claim({"run_id": "api-grade", "step": "s1", "agent": "cto-engineering"})
+        self.token = self.api.claim({"run_id": "api-grade", "step": "s1",
+                                     "agent": "cto-engineering"})["claim_token"]
 
     def break_the_grader(self) -> None:
         """Replace the name `submit` actually calls -- no model is reached."""
@@ -242,7 +243,7 @@ class ApiGradingTest(unittest.TestCase):
         self.start_claimed_run()
         self.break_the_grader()
         with self.assertRaises(self.api.ApiError) as caught:
-            self.api.submit({"run_id": "api-grade", "step": "s1",
+            self.api.submit({"run_id": "api-grade", "step": "s1", "claim_token": self.token,
                              "agent": "cto-engineering", "output": self.GOOD_WORK})
         self.assertEqual(caught.exception.status, 503)
         step = self.core.read_events("api-grade")[-1]["steps"]["s1"]
@@ -252,7 +253,7 @@ class ApiGradingTest(unittest.TestCase):
         self.start_claimed_run()
         self.break_the_grader()
         with self.assertRaises(self.api.ApiError):
-            self.api.submit({"run_id": "api-grade", "step": "s1",
+            self.api.submit({"run_id": "api-grade", "step": "s1", "claim_token": self.token,
                              "agent": "cto-engineering", "output": self.GOOD_WORK})
         held = self.core.read_events("api-grade")[-1]["steps"]["s1"].get("held_evidence")
         self.assertTrue(held, "the worker's output must not be thrown away")

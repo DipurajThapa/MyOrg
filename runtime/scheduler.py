@@ -88,6 +88,12 @@ def intake(planner_backend, log=print) -> list[dict]:
             return []
         from runtime import triggers
         org = os.environ.get("MYORG_ORG_ID", "default")
+        if store.organization_status(org) != "active":
+            # Suspended means suspended (B-03): nothing new starts. Runs already moving are
+            # still driven below, and the watchers still watch -- a paused company must
+            # never look like a healthy quiet one.
+            log(f"  intake skipped: organization {org} is suspended")
+            return []
         triggers.fire_due_schedules(store, org, log=log)
         return triggers.start_queued(store, org, planner_backend, log=log)
     except Exception as error:  # noqa: BLE001 - starting work must not stop finishing it
@@ -101,9 +107,8 @@ def sweep(backend, max_iterations: int = MAX_ITERATIONS, log=print,
     stops the others. Without a planner backend nothing new is started -- the sweep drives
     what already exists, which is what every caller before triggers existed expected."""
     result = SweepResult()
-    # Give back anything a dead worker was holding, before deciding what can move.
-    from runtime.leases import reclaim
-    reclaim(log=log)
+    # A worker that stopped heartbeating simply lets its claim expire; `drive_step` then
+    # adopts the step. There is no second liveness record to sweep (B-01).
     if planner_backend is not None:
         result.started = [item["run_id"] for item in intake(planner_backend, log)]
     for run in all_health():
@@ -201,6 +206,10 @@ def serve(backend, interval: int = DEFAULT_INTERVAL_SECONDS,
     so no single pass can run away.
     """
     completed = 0
+    if not stop_when_idle and not os.environ.get("MYORG_NOTIFY_COMMAND", "").strip():
+        # The one thing an unattended loop must not be is silent about being silent.
+        log("WARNING: MYORG_NOTIFY_COMMAND is not set -- notices will pile up in the outbox "
+            "and nobody will be told. See docs/OPERATIONS-RUNBOOK.md#being-told")
     while max_passes == 0 or completed < max_passes:
         if shutdown and shutdown.requested:
             log(f"stop requested; stopping cleanly after {completed} passes")
@@ -219,7 +228,11 @@ def serve(backend, interval: int = DEFAULT_INTERVAL_SECONDS,
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="Notices (a decision waiting, a run that stopped) go to the outbox and are "
+               "delivered by the command in MYORG_NOTIFY_COMMAND; unset, nobody is told. "
+               "See docs/OPERATIONS-RUNBOOK.md#being-told.")
     parser.add_argument("--once", action="store_true", help="one sweep, then exit")
     parser.add_argument("--supervised", action="store_true",
                         help="run as a service: an idle pass is normal, stop only on a signal")

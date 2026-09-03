@@ -136,10 +136,11 @@ class OwnershipTest(unittest.TestCase):
     def test_the_outside_worker_can_still_hand_its_work_in(self) -> None:
         from tests.test_grading import CountingBackend
         self.make_run("own-p5b")
-        self.api.claim({"run_id": "own-p5b", "step": "s1", "agent": "cto-engineering"})
+        token = self.api.claim({"run_id": "own-p5b", "step": "s1",
+                                "agent": "cto-engineering"})["claim_token"]
         self.executor.advance("own-p5b", CountingBackend(), log=self.logs.append)
         result = self.api.submit({"run_id": "own-p5b", "step": "s1",
-                                  "agent": "cto-engineering",
+                                  "agent": "cto-engineering", "claim_token": token,
                                   "output": "The outside worker's finished deliverable. " * 20})
         self.assertTrue(result["accepted"])
         self.assertEqual(self.step_of("own-p5b")["status"], "completed")

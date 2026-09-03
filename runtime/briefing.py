@@ -139,7 +139,12 @@ def evidence_for(state: dict, step: dict, limit: int) -> str:
 
 
 def write_brief(run_id: str, step_id: str, state: dict, backend, limit: int) -> Brief | None:
-    """Generate and cache the brief. A failure here must never block the approval."""
+    """Generate and cache the brief. A failure here must never block the approval.
+
+    Known, accepted undercount (B-04): this is at most one model call per parked yellow
+    step and it is not charged to the run -- the step has already made its transition by
+    the time the brief is written, and a spend event of its own would cost a cycle. Every
+    other call (work, grade, check, plan) is charged. Revisit if briefs become long."""
     step = state["steps"][step_id]
     evidence = evidence_for(state, step, limit)
     if not evidence.strip():

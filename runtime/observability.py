@@ -186,6 +186,16 @@ class RuntimeGauges:
         sample["spend_usd_total"] = round(total, 4)
         sample["spend_usd_worst_run"] = round(worst, 4)
 
+    def _suspension(self, sample: dict, now: datetime) -> None:
+        """1 while this host's organization is suspended. A pause that nobody can see is
+        indistinguishable from a healthy quiet company, which is the failure OBS-08 exists
+        to prevent -- so the pause is a gauge and an alert, not just a row."""
+        if self.store is None:
+            return
+        import os
+        org = os.environ.get("MYORG_ORG_ID", "default")
+        sample["org_suspended"] = int(self.store.organization_status(org) == "suspended")
+
     def _authorizations(self, sample: dict, now: datetime) -> None:
         """Seconds until the first enabled connector loses its authorization.
 
@@ -211,9 +221,10 @@ class RuntimeGauges:
                         "trigger_queue_depth": 0, "trigger_queue_oldest_seconds": 0.0,
                         "receipts_in_flight": 0, "receipt_unsettled_seconds_max": 0.0,
                         "authorization_expires_seconds": NO_AUTHORIZATION_EXPIRY,
-                        "spend_usd_total": 0.0, "spend_usd_worst_run": 0.0, "ok": 1}
+                        "spend_usd_total": 0.0, "spend_usd_worst_run": 0.0,
+                        "org_suspended": 0, "ok": 1}
         for source in (self._runs, self._approvals, self._notices, self._triggers,
-                       self._receipts, self._authorizations, self._spend):
+                       self._receipts, self._authorizations, self._spend, self._suspension):
             try:
                 source(sample, moment)
             except Exception:  # noqa: BLE001 - a scrape must never take the server down
@@ -278,6 +289,9 @@ class RuntimeGauges:
             "# HELP myorg_connector_authorization_expires_seconds Until the first enabled connector loses access; negative once it has.",
             "# TYPE myorg_connector_authorization_expires_seconds gauge",
             f'myorg_connector_authorization_expires_seconds {sample["authorization_expires_seconds"]:.0f}',
+            "# HELP myorg_org_suspended 1 while the organization is suspended: nothing new starts, nobody can sign in.",
+            "# TYPE myorg_org_suspended gauge",
+            f'myorg_org_suspended {sample["org_suspended"]}',
             "# HELP myorg_runtime_snapshot_ok 1 when every source answered, 0 when one did not.",
             "# TYPE myorg_runtime_snapshot_ok gauge",
             f'myorg_runtime_snapshot_ok {sample["ok"]}',

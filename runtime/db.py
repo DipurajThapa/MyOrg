@@ -161,6 +161,13 @@ class Store:
             if updated.rowcount != 1:
                 raise NotFound("organization not found")
 
+    def organization_status(self, org_id: str) -> str:
+        """'active', 'suspended', or 'missing'. Suspended already denies every token
+        (`actor()` joins on an active organization); intake and webhooks read this too."""
+        with self.reading() as connection:
+            row = connection.execute("SELECT status FROM organizations WHERE id=?", (org_id,)).fetchone()
+            return row["status"] if row else "missing"
+
     def bind_identity(self, issuer: str, subject: str, org_id: str, actor_id: str) -> dict:
         subject = subject.strip().lower()
         self.actor(org_id, actor_id)
@@ -409,6 +416,15 @@ class Store:
     def run(self, org_id: str, run_id: str) -> dict:
         with self.reading() as connection:
             return self._run(connection, org_id, run_id)
+
+    def runs(self, org_id: str, limit: int = 100) -> list[dict]:
+        """The organization's runs, most recently changed first -- the read model the
+        Control Center lists and stops runs from."""
+        with self.reading() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT id,workflow_id,goal,status,runtime_status,cycle_count,max_cycles,"
+                "created_by,created_at,updated_at FROM runs WHERE org_id=? "
+                "ORDER BY updated_at DESC, id LIMIT ?", (org_id, limit))]
 
     def run_events(self, org_id: str, run_id: str) -> list[dict]:
         with self.reading() as connection:

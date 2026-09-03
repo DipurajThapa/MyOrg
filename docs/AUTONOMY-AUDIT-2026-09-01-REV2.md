@@ -131,7 +131,7 @@ Legend: ✅ Completed · 🟡 Partial · ⛔ Not started · 🚧 Blocked · ❓ 
 | Approval console | Decide from a brief, not a wall of prose | `approval_server.py` + `briefing.py`, 5-line ASK/IF YES/FINDINGS/WATCH/RECOMMEND, ordered by blast radius | ✅ | 20 tests incl. ordering + XSS; `*.release-output.brief` files | Local, single operator, no auth | — | Human latency reduced |
 | Approval UI (Control Center) | Approve/reject from the web app | Queue screen reads `GET /v1/decisions` and posts a decision with a required reason; red steps render as handed back | ✅ | 29 tests incl. real HTTP; `module-decisions.sh` | No run-detail/timeline view; no trigger or in-flight-receipt screen | UI-02 | Gates answerable from the web |
 | Agent-facing API | Out-of-process agents claim/submit work | `GET /v1/work`, `/v1/claim`, `/v1/submit`, `/v1/heartbeat`, `/v1/fail` | ✅ | `runtime/agent_api.py`; 22 tests | One shared bearer token; no per-agent identity | — | Enables external workers |
-| Leases / liveness | Detect a hung step | `runtime/leases.py` grant/renew/release/expire | ✅ | 149 lines + tests | No lease file present (never exercised outside tests) | — | Recovery path exists |
+| Leases / liveness | Detect a hung step | **Superseded 2026-09-03 (B-01):** the step's claim (`claim_token`, `claim_expires_at`) is the only liveness record; `leases.py` is deleted. `/v1/heartbeat` renews the claim; an unrenewed claim is adopted by the driver | ✅ | `tests/test_agent_api.py` boundary tests | — | — | One record, one expiry |
 | Run health / stall detection | Know what is stuck | `runtime/health.py`: running / waiting / stalled / finished / failed | ✅ | 7 health tests | No alerting — a person must look | OBS-02/03 | Self-monitoring, unnotified |
 | Escalation | Raise what needs a person | `runtime/escalation.py` scan → notices | ✅ | 112 lines + module suite | Notices generated but drive no run (observed in prior session) | notify delivery | Partial |
 | Memory (cross-run) | Don't re-solve the same problem | Append-only, hash-chained, propose→approve→recall into prompts | ✅ | 17 tests; live lesson crossed runs | Keyword recall only; 2 entries total | — | Working, barely used |
@@ -291,7 +291,7 @@ marked **(new)**.
 
 | ID | Deliverable | Status | What Exists | What Is Missing | Deps / Blockers | Pri | Evidence |
 |---|---|---|---|---|---|---|---|
-| REC-02 | Leases / liveness | ✅ | grant/renew/release/expire | Never exercised outside tests | — | P2 | `leases.py` |
+| REC-02 | Leases / liveness | ✅ | Superseded by the claim fence (B-01, 2026-09-03); `leases.py` deleted | — | — | P2 | `docs/EXECUTION-TRACKER.md` §5.3 |
 | REC-08 | Approved steps get finished | ✅ | `advance()` drives `in_progress` | — | — | — | test present |
 | REC-09 **(new)** | Escalation drives work | 🟡 | `escalation.scan()` raises notices | Notices did not move stalled runs until the scheduler fix; unverified since | LOOP-03 | P1 | prior-session observation |
 | OBS-04 | Run health | ✅ | running/waiting/stalled/finished/failed | — | — | — | 7 tests |

@@ -18,7 +18,7 @@ sys.path.insert(0, str(ROOT))
 from runtime import company_runtime as core  # noqa: E402
 from runtime.executor import current_state  # noqa: E402
 
-WAITING_STATUSES = {"awaiting_approval", "blocked_human"}
+WAITING_STATUSES = core.WAITING_STEP
 STALLED_AFTER_MINUTES = 30
 RUNNING, WAITING, STALLED, FINISHED, FAILED = (
     "running", "waiting on you", "stalled", "finished", "failed")
@@ -71,7 +71,7 @@ def classify(state: dict, idle: int | None) -> tuple[str, str]:
         return WAITING, "A red step was handed back to you."
     # Any other end state is a stop. Derived from the runtime's own list rather than named
     # here, so a new terminal state cannot fall through and read as "running" (B-02).
-    if status in core.TERMINAL_RUN or status == "rejected_by_checker":
+    if status in core.TERMINAL_RUN:
         return FAILED, f"Stopped: {status.replace('_', ' ')}."
     steps = state["steps"].values()
     parked = [s for s in steps if s["status"] in WAITING_STATUSES]

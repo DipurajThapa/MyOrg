@@ -78,6 +78,24 @@ organization through offline administration, preserve logs, rotate gateway/issue
 the approved manager if compromise is plausible, and have Security review identity bindings and
 role grants. Never reveal whether an ID exists across tenants.
 
+## Being told
+
+Nothing below matters if nobody hears it. Every "somebody is needed" the runtime detects — a
+decision waiting, a run that stopped, a run gone quiet, a lesson proposed — becomes a
+**notice** in the outbox (`runtime/runs/_outbox.jsonl`, or `MYORG_OUTBOX`). The outbox does
+not send anything by itself: sending is an outward action, so delivery is a command *you*
+wire up once.
+
+Set `MYORG_NOTIFY_COMMAND` in `/etc/myorg/myorg.env` to any executable. The scheduler runs it
+once per outstanding notice, every pass, with the notice as JSON in the last argument, and
+marks the notice delivered when it exits 0. A ten-line script that posts to a chat webhook is
+enough. While it is unset the supervised scheduler prints a warning at every start, and
+`python -m runtime.notify list` is the only way to see what is waiting.
+
+The Prometheus rules in `deploy/prometheus-alerts.yml` are the second channel and watch the
+same conditions from outside — but only if something scrapes `/metrics`. One of the two must
+be real before the company runs unattended.
+
 ## Approvals waiting
 
 `MyOrgApprovalUnanswered` means a run has stopped and is waiting on a person — for over four
@@ -97,7 +115,8 @@ the company may do unattended, forever.
 on anybody. Nobody has been asked for anything, so nobody will notice.
 
 `python -m runtime.health` names them and says why. The usual causes are a step held by a
-worker that died (reclaim with `expire-claim`), a dependency that never completed, or an
+worker that died (its claim expires on its own after `MYORG_CLAIM_SECONDS`, default 600, and
+the driver adopts the step; `expire-claim` forces it sooner), a dependency that never completed, or an
 exhausted cycle budget (`blocked_cycle_limit` — terminal today, REC-11). Check the scheduler
 is alive first: `systemctl status myorg-scheduler`, or `Get-ScheduledTask MyOrgScheduler`.
 
@@ -144,8 +163,22 @@ it and why. A step the agent was mid-way through is discarded when it returns �
 cost is the one figure the run's `spend_usd` will not include. To do the work again, start a
 new run; the old one is the record of what was abandoned.
 
-Stopping *all* new work (rather than one run) is B-03 in `docs/EXECUTION-TRACKER.md`; until
-it lands, disable the schedules in the Control Center and cancel what is moving.
+## Pausing the company
+
+Two levers, both already there. Pick by how much you want to stop.
+
+**Stop one source, stay in the console.** Pause a schedule in the Control Center or with
+`PUT /v1/schedules/{id}/status` `{"enabled": false}`. A webhook trigger is paused the same
+way it was registered — `POST /v1/triggers/webhook` with `"enabled": false`. Runs already
+moving keep moving; cancel the ones you do not want (above).
+
+**Stop everything new.** `python -m runtime.admin organization-status --org <org> --status
+suspended`. A suspended organization starts nothing — the scheduler skips intake and the
+webhook route refuses — and **admits nobody**: every token is refused, so the Control Center
+signs you out too. Runs already moving are still driven to their next gate, and the watchers
+(projection, escalation, `/metrics`) keep running; `myorg_org_suspended` reads 1 and
+`MyOrgOrganizationSuspended` fires after six hours so a pause is never mistaken for a quiet
+day. Resume with `--status active`.
 
 ## Autonomy metrics blind
 

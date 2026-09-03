@@ -173,6 +173,10 @@ class MyOrgHandler(BaseHTTPRequestHandler):
         body = self._body_bytes()
         secret = webhook_secret(self.server.store, org_id, connector_id)
         try:
+            if self.server.store.organization_status(org_id) != "active":
+                # Suspended means suspended (B-03) -- and the refusal is the same one every
+                # other rejection gets, so the route still cannot be used to enumerate orgs.
+                raise TriggerError("organization is suspended")
             intake, created = triggers.receive_webhook(
                 self.server.store, org_id, connector_id, secret,
                 self.headers.get("X-MyOrg-Timestamp", ""), self.headers.get("X-MyOrg-Nonce", ""),
@@ -270,6 +274,9 @@ class MyOrgHandler(BaseHTTPRequestHandler):
             if method == "POST" and path == "/v1/runs":
                 result, created = self.server.service.create_run(principal, self._json(), self._request_id())
                 self._send(HTTPStatus.CREATED if created else HTTPStatus.OK, result)
+                return
+            if method == "GET" and path == "/v1/runs":
+                self._send(HTTPStatus.OK, self.server.service.runs(principal))
                 return
             if method == "GET" and len(parts) in {3, 4} and parts[:2] == ["v1", "runs"]:
                 run_id = parts[2]

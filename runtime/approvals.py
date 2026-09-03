@@ -19,7 +19,7 @@ from runtime.briefing import Brief, load_brief  # noqa: E402
 from runtime.executor import (MAX_HANDOFF_CHARS, clip, current_state,  # noqa: E402
                               namespace, quietly, request_id)
 
-WAITING = {"awaiting_approval", "blocked_human"}
+WAITING = core.WAITING_STEP
 RISK_REASON = {
     "yellow": "This leaves the building or cannot be undone, so a human decides it.",
     "red": "Never automated. A human must do this themselves, outside the system.",

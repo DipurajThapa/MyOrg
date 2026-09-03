@@ -40,7 +40,7 @@ EVIDENCE_DIR = ROOT / "runtime" / "runs"
 MAX_ITERATIONS = 50
 GRADE_ATTEMPTS = 3           # a grader blip must not cost a person's attention
 GRADE_BACKOFF_SECONDS = 2    # multiplied by the attempt number
-HALTED = {"awaiting_approval", "blocked_human"}
+HALTED = core.WAITING_STEP
 # One identity per driver process. Two drivers must be able to tell each other apart, and
 # the role name cannot do that -- an outside worker acts as the same department.
 HOLDER = f"executor-{uuid.uuid4().hex[:8]}"
@@ -246,29 +246,35 @@ def finish(run_id: str, step_id: str, owner: str, evidence: str, revision: str,
 
 
 def record_failure(run_id: str, step_id: str, owner: str, reason: str,
-                   spend: float = 0.0) -> None:
+                   spend: float = 0.0, claim_token: str | None = None,
+                   request_id_value: str | None = None) -> None:
     """Hand the failure to the state machine so its retry budget decides what happens.
 
     A rejected attempt still cost money -- the expensive path in the observed end-to-end run
-    was three of these -- so the charge rides here too, not only on success."""
+    was three of these -- so the charge rides here too, not only on success.
+
+    The in-process driver holds the current claim, so it may read the token back from the
+    run. An outside worker must *bring* its token (B-01): reading it from the run would let a
+    worker whose claim had been taken over write with the new holder's token."""
     try:
         quietly(core.fail, namespace(run_id=run_id, step=step_id, actor=owner,
                                      reason=reason[:200], spend=spend,
-                                     claim_token=token_for(run_id, step_id),
-                                     request_id=request_id(run_id, step_id, "fail")))
+                                     claim_token=claim_token or token_for(run_id, step_id),
+                                     request_id=request_id_value or request_id(run_id, step_id, "fail")))
     except SystemExit as error:
         raise ExecutorError(f"could not record failure on {step_id}: {error}") from error
 
 
 def hold_for_human(run_id: str, step_id: str, owner: str, output: str,
-                   reason: str, log, spend: float = 0.0) -> None:
+                   reason: str, log, spend: float = 0.0, claim_token: str | None = None,
+                   request_id_value: str | None = None) -> None:
     """Keep the work, park the step, tell a person. Never pass what was not graded."""
     artifact = write_evidence(run_id, step_id, output, "ungraded")
     try:
         quietly(core.hold, namespace(run_id=run_id, step=step_id, actor=owner,
                                      evidence=artifact, reason=reason[:200], spend=spend,
-                                     claim_token=token_for(run_id, step_id),
-                                     request_id=request_id(run_id, step_id, "hold")))
+                                     claim_token=claim_token or token_for(run_id, step_id),
+                                     request_id=request_id_value or request_id(run_id, step_id, "hold")))
     except SystemExit as error:
         raise ExecutorError(f"could not hold {step_id}: {error}") from error
     log(f"  {step_id}: quality gate could not run -- {reason}; held for a human ({artifact})")

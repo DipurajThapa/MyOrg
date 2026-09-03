@@ -79,6 +79,15 @@ class MyOrgService:
     # They are a different thing from `request_approval` below, which governs a single
     # connector write. Both end at a named human; only this one can move a run.
 
+    def runs(self, principal: Principal) -> list[dict]:
+        """Every run in this organization, newest change first, with what a person can do
+        about it. Read-only; the same audience that may see the decision queue."""
+        from runtime import company_runtime as core
+        rows = self.store.runs(principal.org_id)
+        for row in rows:
+            row["can_cancel"] = row.get("runtime_status") not in core.TERMINAL_RUN
+        return rows
+
     def pending_decisions(self, principal: Principal) -> list[dict]:
         """Everything in this organization waiting on a person, worst first."""
         from runtime import approvals

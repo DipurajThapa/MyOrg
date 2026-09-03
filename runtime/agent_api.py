@@ -13,14 +13,12 @@ import json
 import os
 import sys
 import uuid
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from runtime import company_runtime as core  # noqa: E402
-from runtime import leases  # noqa: E402
 from runtime.executor import (acceptance_failure, current_state,  # noqa: E402
                               hold_for_human, namespace, quietly,
                               record_failure, write_evidence)
@@ -104,6 +102,23 @@ def holder_for(agent: str) -> str:
     return f"api-{agent}"
 
 
+def holding(run_id: str, step_id: str, agent: str, token: str) -> dict:
+    """The step, if this worker holds it *with this token*. Otherwise 409.
+
+    B-01: the claim token is issued at `/v1/claim` and must come back on every write. It is
+    never read out of the run on the worker's behalf -- that would let a worker whose claim
+    had expired and been taken over write with the new holder's token."""
+    state = current_state(run_id)
+    step = state["steps"].get(step_id)
+    if not step:
+        raise ApiError(404, f"unknown step: {step_id}")
+    if step.get("holder") != holder_for(agent) or not core.claim_is_live(step):
+        raise ApiError(409, f"{agent} does not hold {step_id}")
+    if not hmac.compare_digest(str(step.get("claim_token") or ""), token):
+        raise ApiError(409, f"stale claim token for {step_id}; claim it again")
+    return state
+
+
 def claim(body: dict) -> dict:
     """Take a step and get everything needed to do it. The runtime vets the claim."""
     from runtime.executor import last_feedback, remembered_for, upstream_handoffs
@@ -113,9 +128,8 @@ def claim(body: dict) -> dict:
     step = state["steps"].get(step_id)
     if not step:
         raise ApiError(404, f"unknown step: {step_id}")
-    held = leases.held_by(run_id, step_id)
-    if held and not held.expired(datetime.now(timezone.utc)):
-        raise ApiError(409, f"{step_id} is already held by {held.agent}")
+    if core.claim_is_live(step):
+        raise ApiError(409, f"{step_id} is already held by {step['holder']}")
     try:
         status = quietly(core.request_step, namespace(
             run_id=run_id, step=step_id, actor=agent, holder=holder_for(agent),
@@ -126,15 +140,20 @@ def claim(body: dict) -> dict:
         # Yellow and red steps stop for a human; a worker never receives them.
         return {"claimed": False, "status": status,
                 "detail": "this step is gated and has been handed to a human"}
-    lease = leases.grant(run_id, step_id, agent)
     fresh = current_state(run_id)
+    held = fresh["steps"][step_id]
     request = StepRequest(
         run_id=run_id, step_id=step_id, agent=agent, action=step["action"],
         goal=fresh["goal"], brief=agent_brief(agent),
-        handoffs=upstream_handoffs(fresh, fresh["steps"][step_id]),
-        feedback=last_feedback(fresh, fresh["steps"][step_id]),
-        remembered=remembered_for(step_id, fresh["steps"][step_id], fresh))
-    return {"claimed": True, "status": status, "lease_expires_at": lease.expires_at,
+        handoffs=upstream_handoffs(fresh, held),
+        feedback=last_feedback(fresh, held),
+        remembered=remembered_for(step_id, held, fresh))
+    return {"claimed": True, "status": status,
+            "claim_token": held["claim_token"], "claim_expires_at": held["claim_expires_at"],
+            # Renewing is a run event (it costs a cycle), so heartbeat at about half the
+            # claim's life, not every few seconds.
+            "renew_every_seconds": core.CLAIM_SECONDS // 2,
+            "lease_expires_at": held["claim_expires_at"],  # old name, one release only
             "revision": fresh["workflow_revision"], "prompt": request.prompt()}
 
 
@@ -150,13 +169,10 @@ def graded_failure(run_id, step_id, step, state, output) -> str | None:
 
 def submit(body: dict) -> dict:
     """Hand back the finished work. It faces the same quality gate as in-process work."""
-    run_id, step_id, agent = (field(body, "run_id"), field(body, "step"),
-                              field(body, "agent"))
+    run_id, step_id, agent, token = (field(body, "run_id"), field(body, "step"),
+                                     field(body, "agent"), field(body, "claim_token"))
     output = field(body, "output")
-    held = leases.held_by(run_id, step_id)
-    if held is None or held.agent != agent:
-        raise ApiError(409, f"{agent} does not hold {step_id}")
-    state = current_state(run_id)
+    state = holding(run_id, step_id, agent, token)
     rejection = structural_failure(output)
     if rejection is None:
         try:
@@ -164,44 +180,47 @@ def submit(body: dict) -> dict:
         except ExecutorError as error:
             # The gate could not run. Keep the worker's output, park the step for a
             # person, and tell the worker its job is done -- never record a silent pass.
-            hold_for_human(run_id, step_id, agent, output, str(error), log=lambda _m: None)
-            leases.release(run_id, step_id)
+            hold_for_human(run_id, step_id, agent, output, str(error), log=lambda _m: None,
+                           claim_token=token, request_id_value=request_id(step_id))
             raise ApiError(503, f"quality gate unavailable; {step_id} is held for a human")
     if rejection:
-        record_failure(run_id, step_id, agent, rejection)
-        leases.release(run_id, step_id)
+        record_failure(run_id, step_id, agent, rejection, claim_token=token,
+                       request_id_value=request_id(step_id))
         raise ApiError(422, rejection)
     evidence = write_evidence(run_id, step_id, output)
     try:
         run_status = quietly(core.complete, namespace(
             run_id=run_id, step=step_id, actor=agent, evidence=evidence,
-            revision=state["workflow_revision"],
-            claim_token=state["steps"][step_id].get("claim_token") or None,
+            revision=state["workflow_revision"], claim_token=token,
             request_id=request_id(step_id)))
     except SystemExit as error:
         raise ApiError(409, str(error)) from error
-    leases.release(run_id, step_id)
     return {"accepted": True, "evidence": evidence, "run_status": run_status}
 
 
 def heartbeat(body: dict) -> dict:
-    run_id, step_id, agent = (field(body, "run_id"), field(body, "step"),
-                              field(body, "agent"))
+    """Still working. Extends the claim -- the one liveness record -- by CLAIM_SECONDS."""
+    run_id, step_id, agent, token = (field(body, "run_id"), field(body, "step"),
+                                     field(body, "agent"), field(body, "claim_token"))
+    holding(run_id, step_id, agent, token)
     try:
-        lease = leases.renew(run_id, step_id, agent)
+        expires = quietly(core.renew_claim, namespace(
+            run_id=run_id, step=step_id, holder=holder_for(agent), claim_token=token,
+            request_id=request_id(step_id)))
     except SystemExit as error:
         raise ApiError(409, str(error)) from error
-    return {"lease_expires_at": lease.expires_at}
+    return {"claim_expires_at": expires, "lease_expires_at": expires}
 
 
 def give_up(body: dict) -> dict:
-    run_id, step_id, agent = (field(body, "run_id"), field(body, "step"),
-                              field(body, "agent"))
-    held = leases.held_by(run_id, step_id)
-    if held is None or held.agent != agent:
-        raise ApiError(409, f"{agent} does not hold {step_id}")
-    record_failure(run_id, step_id, agent, field(body, "reason"))
-    leases.release(run_id, step_id)
+    run_id, step_id, agent, token = (field(body, "run_id"), field(body, "step"),
+                                     field(body, "agent"), field(body, "claim_token"))
+    holding(run_id, step_id, agent, token)
+    try:
+        record_failure(run_id, step_id, agent, field(body, "reason"), claim_token=token,
+                       request_id_value=request_id(step_id))
+    except ExecutorError as error:
+        raise ApiError(409, str(error)) from error
     return {"released": True}
 
 

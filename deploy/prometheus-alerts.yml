@@ -81,6 +81,28 @@ groups:
           description: Check for a step failing its acceptance criteria repeatedly; each retry is a full dispatch plus a grading pass.
           runbook: docs/OPERATIONS-RUNBOOK.md#a-run-is-spending-too-much
 
+      - alert: MyOrgTotalSpendHigh
+        # B-05a. The per-run ceiling bounds one run; nothing bounds runs × ceiling. This is
+        # the fleet number, watched before anyone decides whether it needs enforcing. The
+        # threshold is a placeholder until a week of data says what normal is.
+        expr: myorg_spend_usd_total{job="myorg-runtime"} > 25
+        for: 5m
+        labels: { severity: medium }
+        annotations:
+          summary: The runs on this host have spent more than $25 in total
+          description: Read the per-run figures; if many small runs add up, that is the schedule, not a bug. Suspend the organization to stop new work.
+          runbook: docs/OPERATIONS-RUNBOOK.md#a-run-is-spending-too-much
+
+      - alert: MyOrgOrganizationSuspended
+        # B-03. A suspended company starts nothing and admits nobody. That is sometimes
+        # exactly what an operator wants for an hour -- and never what they want to forget.
+        expr: myorg_org_suspended{job="myorg-runtime"} == 1
+        for: 6h
+        labels: { severity: medium }
+        annotations:
+          summary: The organization has been suspended for over 6 hours
+          runbook: docs/OPERATIONS-RUNBOOK.md#pausing-the-company
+
       - alert: MyOrgConnectorAuthorizationExpiring
         # Access dies at a moment nobody chose, mid-run, and the failure looks like a bug.
         # Fourteen days is enough to get a human through an OAuth flow without urgency.

@@ -5,10 +5,10 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,19 +24,18 @@ class AgentApiTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self._env = {k: os.environ.get(k) for k in
-                     ("MYORG_RUNS_DIR", "MYORG_AGENT_TOKEN", "MYORG_LEASE_SECONDS")}
+                     ("MYORG_RUNS_DIR", "MYORG_AGENT_TOKEN", "MYORG_CLAIM_SECONDS")}
         os.environ["MYORG_RUNS_DIR"] = self._tmp.name
         os.environ["MYORG_AGENT_TOKEN"] = TOKEN
-        os.environ["MYORG_LEASE_SECONDS"] = "600"
+        os.environ.pop("MYORG_CLAIM_SECONDS", None)
         self.addCleanup(self._restore)
 
-        from runtime import agent_api, company_runtime, executor, health, leases
+        from runtime import agent_api, company_runtime, executor, health
         self.core = importlib.reload(company_runtime)
         self.executor = importlib.reload(executor)
         importlib.reload(health)
-        self.leases = importlib.reload(leases)
         self.api = importlib.reload(agent_api)
-        for module in (company_runtime, executor, health, leases, agent_api):
+        for module in (company_runtime, executor, health, agent_api):
             self.addCleanup(lambda m=module: importlib.reload(m))
 
         self.logs: list[str] = []
@@ -110,14 +109,19 @@ class AgentApiTest(unittest.TestCase):
         self.assertTrue(self.call("/v1/work?agent=chief-of-staff")[1]["work"])
         self.assertEqual(self.call("/v1/work?agent=cfo-finance")[1]["work"], [])
 
-    def test_claiming_returns_the_prompt_and_a_lease(self):
+    def test_claiming_returns_the_prompt_and_the_fencing_token(self):
         self.create("api-claim")
         status, body = self.call("/v1/claim", {
             "run_id": "api-claim", "step": "frame-goal", "agent": "chief-of-staff"})
         self.assertEqual(status, 200)
         self.assertTrue(body["claimed"])
         self.assertIn("chief-of-staff", body["prompt"])
-        self.assertTrue(body["lease_expires_at"])
+        # B-01: the token the runtime minted is handed to the worker, who must bring it back.
+        step = self.executor.current_state("api-claim")["steps"]["frame-goal"]
+        self.assertEqual(body["claim_token"], step["claim_token"])
+        self.assertEqual(body["claim_expires_at"], step["claim_expires_at"])
+        self.assertEqual(body["lease_expires_at"], step["claim_expires_at"])  # old name kept
+        self.assertGreater(body["renew_every_seconds"], 0)
         self.assertTrue(body["revision"])
 
     def test_a_department_cannot_claim_another_department_s_step(self):
@@ -158,93 +162,152 @@ class AgentApiTest(unittest.TestCase):
 
     # --- submitting -----------------------------------------------------------------
 
-    def claim_first(self, run_id="api-submit"):
+    def claim_first(self, run_id="api-submit") -> tuple[str, str]:
+        """Create a run, claim its first step over HTTP, return (run_id, claim_token)."""
         self.create(run_id)
-        self.call("/v1/claim", {"run_id": run_id, "step": "frame-goal",
-                                "agent": "chief-of-staff"})
-        return run_id
+        _, body = self.call("/v1/claim", {"run_id": run_id, "step": "frame-goal",
+                                          "agent": "chief-of-staff"})
+        return run_id, body["claim_token"]
+
+    def step(self, run_id: str) -> dict:
+        return self.executor.current_state(run_id)["steps"]["frame-goal"]
 
     def test_submitted_work_becomes_hashed_evidence(self):
-        run_id = self.claim_first()
+        run_id, token = self.claim_first()
         status, body = self.call("/v1/submit", {
             "run_id": run_id, "step": "frame-goal", "agent": "chief-of-staff",
-            "output": DELIVERABLE})
+            "claim_token": token, "output": DELIVERABLE})
         self.assertEqual(status, 200)
         self.assertTrue(body["accepted"])
 
-        step = self.executor.current_state(run_id)["steps"]["frame-goal"]
+        step = self.step(run_id)
         self.assertEqual(step["status"], "completed")
         self.assertEqual(step["evidence_sha256"],
                          self.core.evidence_path(step["evidence"])[1])
-        self.assertIsNone(self.leases.held_by(run_id, "frame-goal"))
+        self.assertFalse(self.core.claim_is_live(step))
 
     def test_a_refusal_sent_in_is_rejected_like_any_other(self):
-        run_id = self.claim_first("api-junk")
+        run_id, token = self.claim_first("api-junk")
         status, body = self.call("/v1/submit", {
             "run_id": run_id, "step": "frame-goal", "agent": "chief-of-staff",
-            "output": "I need more information about this. " * 8})
+            "claim_token": token, "output": "I need more information about this. " * 8})
         self.assertEqual(status, 422)
         self.assertIn("refuses", body["error"])
-        self.assertNotEqual(
-            self.executor.current_state(run_id)["steps"]["frame-goal"]["status"],
-            "completed")
+        self.assertNotEqual(self.step(run_id)["status"], "completed")
 
     def test_only_the_holder_may_submit(self):
-        run_id = self.claim_first("api-thief")
+        run_id, token = self.claim_first("api-thief")
         status, body = self.call("/v1/submit", {
             "run_id": run_id, "step": "frame-goal", "agent": "cfo-finance",
-            "output": DELIVERABLE})
+            "claim_token": token, "output": DELIVERABLE})
         self.assertEqual(status, 409)
         self.assertIn("does not hold", body["error"])
 
     def test_a_worker_can_give_the_work_back(self):
-        run_id = self.claim_first("api-giveup")
+        run_id, token = self.claim_first("api-giveup")
         status, _ = self.call("/v1/fail", {
             "run_id": run_id, "step": "frame-goal", "agent": "chief-of-staff",
-            "reason": "cannot reach the source system"})
+            "claim_token": token, "reason": "cannot reach the source system"})
         self.assertEqual(status, 200)
-        self.assertEqual(
-            self.executor.current_state(run_id)["steps"]["frame-goal"]["status"], "ready")
-        self.assertIsNone(self.leases.held_by(run_id, "frame-goal"))
+        self.assertEqual(self.step(run_id)["status"], "ready")
+        self.assertFalse(self.core.claim_is_live(self.step(run_id)))
+
+    # --- the fencing token across the API boundary (B-01) --------------------------
+
+    def test_every_write_needs_the_token_it_was_issued(self):
+        """Failing before B-01: `submit` read the current token out of the run, so a
+        worker never had to present one and a stale worker always passed the fence."""
+        run_id, token = self.claim_first("api-fence")
+        for path, extra in (("/v1/submit", {"output": DELIVERABLE}),
+                            ("/v1/heartbeat", {}),
+                            ("/v1/fail", {"reason": "x"})):
+            status, body = self.call(path, {"run_id": run_id, "step": "frame-goal",
+                                            "agent": "chief-of-staff", **extra})
+            self.assertEqual(status, 400, path)
+            self.assertIn("claim_token", body["error"])
+            status, body = self.call(path, {"run_id": run_id, "step": "frame-goal",
+                                            "agent": "chief-of-staff",
+                                            "claim_token": token + "-stale", **extra})
+            self.assertEqual(status, 409, path)
+            self.assertIn("stale", body["error"])
+        self.assertEqual(self.step(run_id)["status"], "in_progress")
+        self.assertEqual(self.step(run_id)["claim_token"], token)
+
+    def test_a_worker_whose_claim_was_taken_over_cannot_complete_the_step(self):
+        """Failing before B-01 (the race experiment, case b)."""
+        run_id, token = self.claim_first("api-taken")
+        # Its claim lapsed and another holder took the step -- a newer token now rules.
+        self.executor.quietly(self.core.expire_claim, self.executor.namespace(
+            run_id=run_id, step="frame-goal", actor="operator", request_id="exp-1"))
+        self.executor.quietly(self.core.take, self.executor.namespace(
+            run_id=run_id, step="frame-goal", actor="chief-of-staff",
+            holder="executor-other", request_id="take-1"))
+        status, body = self.call("/v1/submit", {
+            "run_id": run_id, "step": "frame-goal", "agent": "chief-of-staff",
+            "claim_token": token, "output": DELIVERABLE})
+        self.assertEqual(status, 409)
+        self.assertIn("does not hold", body["error"])
+        self.assertEqual(self.step(run_id)["status"], "in_progress")
+        self.assertEqual(self.step(run_id)["holder"], "executor-other")
 
     # --- heartbeats and dead workers ------------------------------------------------
 
-    def test_a_heartbeat_extends_the_lease(self):
-        run_id = self.claim_first("api-beat")
-        before = self.leases.held_by(run_id, "frame-goal").expires_at
-        later = datetime.now(timezone.utc) + timedelta(seconds=60)
-        renewed = self.leases.renew(run_id, "frame-goal", "chief-of-staff", now=later)
-        self.assertGreater(renewed.expires_at, before)
+    def test_a_heartbeat_extends_the_claim_the_driver_reads(self):
+        """Failing before B-01 (the race experiment, case a): the heartbeat renewed a
+        lease the driver never looked at, and the driver took the step at CLAIM_SECONDS."""
+        os.environ["MYORG_CLAIM_SECONDS"] = "1"
+        self.core = importlib.reload(self.core)
+        run_id, token = self.claim_first("api-beat")
+        time.sleep(1.2)  # the original claim has expired
+        status, body = self.call("/v1/heartbeat", {
+            "run_id": run_id, "step": "frame-goal", "agent": "chief-of-staff",
+            "claim_token": token})
+        self.assertEqual(status, 409, "a heartbeat after expiry is too late, by design")
+        # Heartbeat *before* expiry keeps the claim alive and the driver away.
+        os.environ["MYORG_CLAIM_SECONDS"] = "3"
+        self.core = importlib.reload(self.core)
+        run_id, token = self.claim_first("api-beat-live")
+        before = self.step(run_id)["claim_expires_at"]
+        time.sleep(1.2)
+        status, body = self.call("/v1/heartbeat", {
+            "run_id": run_id, "step": "frame-goal", "agent": "chief-of-staff",
+            "claim_token": token})
+        self.assertEqual(status, 200)
+        self.assertGreater(body["claim_expires_at"], before)
+        self.executor.advance(run_id, self.executor.StubBackend(), log=self.logs.append)
+        step = self.step(run_id)
+        self.assertEqual(step["status"], "in_progress")
+        self.assertEqual(step["holder"], "api-chief-of-staff")
+        self.assertEqual(step["claim_token"], token)
 
     def test_only_the_holder_may_heartbeat(self):
-        run_id = self.claim_first("api-beat2")
+        run_id, token = self.claim_first("api-beat2")
         status, body = self.call("/v1/heartbeat", {
-            "run_id": run_id, "step": "frame-goal", "agent": "cfo-finance"})
+            "run_id": run_id, "step": "frame-goal", "agent": "cfo-finance",
+            "claim_token": token})
         self.assertEqual(status, 409)
-        self.assertIn("held by", body["error"])
+        self.assertIn("does not hold", body["error"])
 
     def test_a_heartbeat_on_nothing_is_refused(self):
         self.create("api-nolease")
         status, _ = self.call("/v1/heartbeat", {
-            "run_id": "api-nolease", "step": "frame-goal", "agent": "chief-of-staff"})
+            "run_id": "api-nolease", "step": "frame-goal", "agent": "chief-of-staff",
+            "claim_token": "anything"})
         self.assertEqual(status, 409)
 
-    def test_work_abandoned_by_a_dead_worker_is_given_back(self):
-        run_id = self.claim_first("api-dead")
-        gone = datetime.now(timezone.utc) + timedelta(seconds=3600)
-
-        self.assertTrue(self.leases.abandoned(gone))
-        recovered = self.leases.reclaim(now=gone, log=self.logs.append)
-        self.assertEqual(recovered, [f"{run_id}/frame-goal"])
-        # Back in the pool, and the runtime's retry budget counted the attempt.
-        self.assertEqual(
-            self.executor.current_state(run_id)["steps"]["frame-goal"]["status"], "ready")
-        self.assertIsNone(self.leases.held_by(run_id, "frame-goal"))
-
-    def test_a_live_lease_is_never_reclaimed(self):
-        self.claim_first("api-alive")
-        self.assertEqual(self.leases.abandoned(), [])
-        self.assertEqual(self.leases.reclaim(log=self.logs.append), [])
+    def test_work_abandoned_by_a_dead_worker_is_adopted_by_the_driver(self):
+        """An unrenewed claim expires and the driver does the step itself. No attempt is
+        burned and no second liveness record is consulted -- there is none."""
+        os.environ["MYORG_CLAIM_SECONDS"] = "1"
+        self.core = importlib.reload(self.core)
+        run_id, _ = self.claim_first("api-dead")
+        attempts = self.step(run_id)["attempts"]
+        time.sleep(1.2)
+        self.executor.advance(run_id, self.executor.StubBackend(), log=self.logs.append)
+        step = self.step(run_id)
+        self.assertEqual(step["status"], "completed")
+        self.assertEqual(step["attempts"], attempts)
+        self.assertFalse((self.core.RUNS / "leases.json").exists())
 
     def test_health_is_readable_over_the_api(self):
         self.create("api-health")

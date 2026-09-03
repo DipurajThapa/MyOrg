@@ -4,3 +4,5 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 echo "── Cost recording, the run ceiling, and the budget extension ──"
 python3 -m unittest -v tests.test_budget
+echo "── Every model call the ceiling should see (B-04) ──"
+python3 -m unittest -v tests.test_spend_coverage

@@ -167,7 +167,9 @@ def start_queued(store: Store, org_id: str, backend, limit: int = 5, log=print) 
                                 "source": intake["source"]})
                 log(f"  trigger {intake['id']}: adopted the run a previous attempt created")
                 continue
-            workflow = plan(intake["goal"], run_id, backend, log=lambda _message: None)
+            costs: list[float] = []
+            workflow = plan(intake["goal"], run_id, backend, log=lambda _message: None,
+                            costs=costs)
             # Generated plans go next to the runs, never into `runtime/workflows/`. That
             # directory is hand-authored source under version control; a daemon writing
             # into it would grow the repository without bound and make `git status` noise
@@ -179,7 +181,7 @@ def start_queued(store: Store, org_id: str, backend, limit: int = 5, log=print) 
             # through its own log, so the stray line is swallowed here.
             with redirect_stdout(io.StringIO()):
                 core.create_run(SimpleNamespace(
-                    workflow=str(destination), run_id=run_id, org=org_id,
+                    workflow=str(destination), run_id=run_id, org=org_id, spend=sum(costs),
                     actor=f"trigger:{intake['source']}", request_id=f"trigger-{intake['id']}"))
         except (ExecutorError, TriggerError, SystemExit, OSError) as error:
             log(f"  trigger {intake['id']}: {error}")

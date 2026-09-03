@@ -51,6 +51,19 @@ type InFlightReceipt = {
   created_at: string;
 };
 
+/** One run as the read model sees it. Mirrors GET /v1/runs. */
+type Run = {
+  id: string;
+  workflow_id: string;
+  goal: string;
+  status: "active" | "completed" | "cancelled" | "blocked";
+  runtime_status: string | null;
+  cycle_count: number;
+  max_cycles: number;
+  updated_at: string;
+  can_cancel: boolean;
+};
+
 /** One parked step waiting on a person. Mirrors GET /v1/decisions exactly. */
 type Decision = {
   run_id: string;
@@ -156,8 +169,11 @@ export default function ControlCenter({
   const [decisionsError, setDecisionsError] = useState("");
   const [schedules, setSchedules] = useState<Schedule[] | null>(null);
   const [inFlight, setInFlight] = useState<InFlightReceipt[] | null>(null);
+  const [runs, setRuns] = useState<Run[] | null>(null);
   const [autonomyError, setAutonomyError] = useState("");
   const [pausing, setPausing] = useState("");
+  const [stopping, setStopping] = useState("");
+  const [stopReason, setStopReason] = useState("");
   const [selectedDecision, setSelectedDecision] = useState<string | null>(null);
   const [decisionReason, setDecisionReason] = useState("");
   const [deciding, setDeciding] = useState(false);
@@ -358,16 +374,18 @@ export default function ControlCenter({
     return () => { active = false; };
   }, [hydrated, isSignedIn, view, loadDecisions]);
 
-  // Two reads, one screen. Both are allowed to fail on their own: an operator who cannot
+  // Three reads, one screen. Each is allowed to fail on its own: an operator who cannot
   // see the exceptions should still be able to reach the stop button.
   const loadAutonomy = useCallback(async () => {
-    const [scheduleResult, receiptResult] = await Promise.allSettled([
+    const [scheduleResult, receiptResult, runResult] = await Promise.allSettled([
       runtimeRequest<Schedule[]>("/v1/schedules"),
       runtimeRequest<InFlightReceipt[]>("/v1/connectors/in-flight"),
+      runtimeRequest<Run[]>("/v1/runs"),
     ]);
     setSchedules(scheduleResult.status === "fulfilled" ? scheduleResult.value : []);
     setInFlight(receiptResult.status === "fulfilled" ? receiptResult.value : []);
-    const failed = [scheduleResult, receiptResult].find((r) => r.status === "rejected");
+    setRuns(runResult.status === "fulfilled" ? runResult.value : []);
+    const failed = [scheduleResult, receiptResult, runResult].find((r) => r.status === "rejected");
     setAutonomyError(
       failed && failed.status === "rejected"
         ? failed.reason instanceof Error ? failed.reason.message : "Autonomy state could not be read"
@@ -393,6 +411,28 @@ export default function ControlCenter({
       setNotice(error instanceof Error ? error.message : "The schedule could not be changed");
     } finally {
       setPausing("");
+    }
+  }
+
+  // B-02: the one lever that stops a run a person no longer wants, whether or not it is
+  // sitting at a gate. Terminal, audited against the operator's name, nothing deleted.
+  async function stopRun(run: Run) {
+    const reason = stopReason.trim();
+    if (!reason) {
+      setNotice("Say why. Stopping a run is recorded against your name and needs a reason.");
+      return;
+    }
+    setStopping(run.id);
+    try {
+      await runtimeRequest(`/v1/runs/${run.id}/cancel`,
+        { method: "POST", body: JSON.stringify({ reason }) });
+      setNotice(`${run.id} is stopped. What it finished is kept; nothing more will happen to it.`);
+      setStopReason("");
+      await loadAutonomy();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "The run could not be stopped");
+    } finally {
+      setStopping("");
     }
   }
 
@@ -813,6 +853,64 @@ export default function ControlCenter({
                     <p>{autonomyError}</p>
                   </article>
                 )}
+
+                <article className="panel run-detail">
+                  <div className="run-title-row">
+                    <div>
+                      <span className="mono-label">
+                        {runs === null ? "READING" : `${runs.filter((r) => r.can_cancel).length} MOVING · ${runs.filter((r) => !r.can_cancel).length} ENDED`}
+                      </span>
+                      <h2>Runs</h2>
+                    </div>
+                  </div>
+                  <p>
+                    Everything the company is doing or has done. Stopping a run ends it for good:
+                    finished steps and their evidence stay, the step in progress is discarded, and
+                    the log says who stopped it and why.
+                  </p>
+                  {runs !== null && runs.length === 0 && (
+                    <p className="muted">No runs yet. Nothing has been asked of the company.</p>
+                  )}
+                  {runs !== null && runs.some((r) => r.can_cancel) && (
+                    <label className="field">
+                      <span>Why stop it?</span>
+                      <input
+                        type="text"
+                        value={stopReason}
+                        maxLength={200}
+                        placeholder="Reason, recorded in the audit log"
+                        onChange={(event) => setStopReason(event.target.value)}
+                      />
+                    </label>
+                  )}
+                  <div className="autonomy-list">
+                    {(runs ?? []).map((run) => (
+                      <div key={run.id} className="autonomy-item">
+                        <div className="run-title-row">
+                          <div>
+                            <span className="mono-label">
+                              {(run.runtime_status ?? run.status).replace(/_/g, " ").toUpperCase()} ·{" "}
+                              {run.cycle_count}/{run.max_cycles} CYCLES
+                            </span>
+                            <h3>{run.id}</h3>
+                          </div>
+                          {run.can_cancel && (
+                            <button
+                              type="button"
+                              className="secondary-action"
+                              disabled={stopping === run.id}
+                              onClick={() => void stopRun(run)}
+                            >
+                              {stopping === run.id ? "Stopping…" : "Stop run"}
+                            </button>
+                          )}
+                        </div>
+                        <p>{run.goal}</p>
+                        <p className="muted">{run.workflow_id} · last change {run.updated_at}</p>
+                      </div>
+                    ))}
+                  </div>
+                </article>
 
                 <article className="panel run-detail">
                   <div className="run-title-row">

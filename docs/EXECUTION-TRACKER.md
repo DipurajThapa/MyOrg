@@ -129,14 +129,14 @@ Compact table, then a detail block for every row that is active or next.
 
 | ID | Outcome | Status | Pri | Depends on | Next action |
 |---|---|---|---|---|---|
-| **NOTIFY-01** | A person is actually told when the company needs one | **Blocked** (human: choose channel) | **P0** | — | Operator sets `MYORG_NOTIFY_COMMAND`; engineer adds it to env example, units, runbook, and a startup warning when unset |
-| **B-02** | A named human can stop any non-terminal run in one action | **In Progress** — verb, API route, generalised terminal handling, runbook: **done 2026-09-03**, 12 tests + 277 existing green. Control Center button: **blocked on B-09** | **P0** | B-09 (button only) | Decide B-09, then add the button (needs a run list the UI does not have yet) |
-| **B-01** | One liveness record; the external-worker fence is real | **Ready** — both failing tests fail as predicted 2026-09-03 (§5.3) | **P1** (P0 before any external worker) | — | Implement per §5.3 |
-| **B-04** | Every model call is charged to a run or documented as uncharged | **Validating** | P1 | — | Measure plan / check / brief cost (§5.4) |
-| **B-03** | `suspended` stops new work without silencing the watchers | **Ready** | P1 | B-02 (ships with) | Implement per §5.5 after B-02's experiment |
-| **B-05a** | Total spend is alerted on | **Ready** | P1 | NOTIFY-01 | Add the rule; verify it fires against a synthetic gauge |
-| **B-09** | One authoritative approval surface | **Proposed** (decision) | P1 | — | Owner decides: Control Center authoritative; `approval_server.py` fallback or retired |
-| **B-08** | An ownership rule between the driver and external workers | **Deferred** | P2 | B-01; first external worker | None until an external worker is planned |
+| **NOTIFY-01** | A person is actually told when the company needs one | **Blocked** on the human half only — discoverability **done 2026-09-03**: env example, unit file, runbook "Being told", README, `--help`, startup warning; 3 tests | **P0** | — | Operator sets `MYORG_NOTIFY_COMMAND` to a real command and confirms one notice arrives |
+| **B-02** | A named human can stop any non-terminal run in one action | **Done 2026-09-03** — verb, `POST /v1/runs/{id}/cancel`, `GET /v1/runs`, Control Center "Runs" panel with Stop, terminal handling derived from `TERMINAL_RUN`, runbook; 12 tests | — | — | Watch: cancellation frequency (§6 item 8) |
+| **B-01** | One liveness record; the external-worker fence is real | **Done 2026-09-03** — `leases.py` deleted; `/v1/claim` returns `claim_token`; submit/heartbeat/fail require it (400 missing, 409 stale); `renew-claim` mutation; driver adopts an unrenewed claim; 3 boundary tests that failed before | — | — | REV2 "Leases / liveness" row → superseded |
+| **B-04** | Every model call is charged to a run or documented as uncharged | **Done 2026-09-03** — measured (§5.4), then: checker review charged on `check-*`; plan cost seeded at `create_run` (`planning_spend_usd`); brief documented as the one accepted undercount; 4 tests | — | — | Re-derive the `$5` default once a real planned run is measured |
+| **B-03** | `suspended` stops new work without silencing the watchers | **Done 2026-09-03** — intake skips, webhook refuses (same refusal), tokens were already refused; `myorg_org_suspended` gauge + 6 h alert; runbook "Pausing the company"; 4 tests | — | — | — |
+| **B-05a** | Total spend is alerted on | **Done 2026-09-03** — `MyOrgTotalSpendHigh` at $25 placeholder | — | NOTIFY-01 (to be heard) | Re-threshold after a week of data |
+| **B-09** | One authoritative approval surface | **Decided 2026-09-03** (§6 item 7): Control Center via `api.py` is canonical; `approval_server.py` is the local fallback and gains no verb the API lacks. Retirement needs a memory-decision route first | P2 | — | Add `POST /v1/memory/{id}/decision` when the local server is retired; until then, no new verbs there |
+| **B-08** | An ownership rule between the driver and external workers | **Deferred** — documented (§6 item 6): the two paths, the failure modes, and the one decision owed | P2 | first external worker | Decide before admitting a worker; do not build before |
 | **B-06** | A sweep pass cannot be held indefinitely by one run | **Deferred** | P2 | B-03 (same function) | None until head-of-line blocking is observed |
 | **B-05b** | An enforcing fleet spend ceiling | **Deferred** | P3 | B-05a + a week of data | None |
 | **B-07** | Surface `SweepResult.failed` | **Rejected** | — | — | — (STALLED at 30 min covers it) |
@@ -336,6 +336,26 @@ passes, and REV2's "Leases / liveness" row is annotated "superseded by claims (B
 `drive_check`; one `write_brief`. Record the three figures here. These decide the design of
 the brief case and re-derive A-01's default.
 
+> **Measured 2026-09-03 [V]** — call *counts* from the real executor/checker/planner paths
+> with counting stub backends (no model, no money); unit prices are cycle 2's
+> ($0.80 per graded step warm, grading ≈40% of it).
+>
+> | scenario | calls by kind | charged before | charged after |
+> |---|---|---|---|
+> | plan, valid first time | plan 1 | none | seeded on the run |
+> | plan, 1–2 bad answers | plan 2–3 (`MAX_REPAIR_ATTEMPTS=3`; ×3 trigger retries = up to 9 per trigger) | none | seeded |
+> | graded step, passes | work 1, grade 1 | both | both |
+> | graded step, 2 rejections | work 3, grade 3 | all 6 | all 6 |
+> | maker-checker, approve | work 1, check 1 | work only | both |
+> | maker-checker, 2 RETURNs | work 3, check 3 | 3 of 6 (**50% invisible**) | all 6 |
+> | maker-checker, RETURN past limit | work 3, check 3 → `blocked_review_limit` | 3 of 6 | all 6 |
+> | yellow step parked | brief 0 in this fixture (`write_brief` returns early with no upstream evidence); ≤1 otherwise | none | documented undercount |
+>
+> Cycle 3's "1 + 3 repairs" was wrong: `plan()` makes at most 3 calls. The material gaps were
+> the checker (half of every RETURN loop) and the plan (100% of pre-run spend). Both now
+> ride existing transitions; the brief stays uncharged and says so in its docstring.
+> Threshold to reconsider the brief: a measured brief above ~2% of a graded step.
+
 **Design.**
 - *Planner:* `plan()` returns `(workflow, cost_usd)` by summing `Output.cost_usd` across its
   calls; `start_queued` passes it to `create_run(spend=...)`, which seeds `state["spend_usd"]`
@@ -383,29 +403,78 @@ signature, token issue refused, an existing active run still advances, gauge rea
 
 ## 6. Critical challenges and missing considerations
 
-1. **The reviews measured everything except whether anyone would hear about it.** Both cycles
-   proposed alerts and notices; neither noticed the delivery command is documented nowhere an
-   operator would look. Fixing that is worth more than any item in either tracker.
-2. **Cycle 3 under-called B-01.** It framed the defect as lease-vs-claim expiry. The larger
-   defect is that the API never round-trips the token, so the fence is decorative for external
-   workers. The consolidation fixes both, but the failing test must cover both.
-3. **Cycle 3 under-called B-04.** "Planner only" was wrong; the checker is uncharged too, and
-   RETURN cycles multiply it. Measured numbers decide the brief case — do not design it first.
-4. **Cycle 3's pause design would have been the third mechanism.** A dead `suspended` flag
-   already exists. Extending it is smaller and leaves one concept.
-5. **New terminal states are a class of bug, not an instance.** `classify` enumerates terminal
-   statuses by hand; `cancelled` would have silently become "stalled". Generalise from
-   `TERMINAL_RUN` and add the agreement test, or the next terminal state repeats it.
-6. **Two dispatch paths, no ownership rule (B-08).** Not urgent — no external worker exists —
-   but it is the design question behind B-01, and B-01 deliberately does not answer it. Do not
-   let an external worker be admitted without the rule.
-7. **Two approval surfaces (B-09).** The most sensitive action in the product has two front
-   doors with different authorization. That is a decision, not a build, and it should be made
-   before B-02 adds a third verb to either.
-8. **A cancelled run under-reports its cost by one dispatch.** Accepted and documented rather
-   than solved with a new event type. If B-05a's data shows cancellations are frequent, revisit.
-9. **`over_budget` re-reads the whole log per ready step per pass.** Correct today; will be the
-   first latency symptom under load. Watch, do not fix.
+Updated 2026-09-03 after the audit pass. Each item says what was verified, what was done, and
+what is deliberately left open.
+
+1. **Nobody would have heard the alerts.** Verified: `MYORG_NOTIFY_COMMAND` appeared only in
+   audit documents. Done: env example, unit file, runbook "Being told", README, scheduler
+   `--help`, and a startup warning under `--supervised`; `test_operator_surface` holds all of
+   them. Open: the value itself — a human picks the channel.
+2. **B-01 was worse than framed.** Verified at the HTTP boundary: `submit` read the current
+   token out of the run, so a worker whose claim had been taken over completed the step
+   (race experiment case b). Done: the lease store is deleted; the token is issued at claim
+   and required on every write; heartbeat is a `renew-claim` mutation on the one record.
+   Semantics changed on purpose: an unrenewed claim is **adopted** by the driver (no attempt
+   burned) instead of being **failed** by `reclaim`.
+3. **B-04 was broader than framed.** Measured (§5.4): the checker was half of every RETURN
+   loop and charged nothing; the plan was charged nothing. Both now ride existing
+   transitions. The brief is the one accepted undercount and says so where it lives.
+4. **`suspended` was not dead — it was one-third built.** Verified: `store.actor()` joins on an
+   active organization, so every token was already refused for a suspended org
+   (`test_production_foundation` proves it). Missing were intake and the webhook route; both
+   now check. This makes `suspended` mean *tenant off* — it signs the operator out too. The
+   "stay in the console" pause is the existing per-schedule and per-trigger `enabled` flag;
+   the runbook names both levers. No third mechanism.
+5. **Terminal states drifted in one more place than cycle 3 saw.** Verified:
+   `rejected_by_checker` was set as a run status, handled by `classify`, `DEAD_END` and
+   `COARSE_STATUS`, and **absent from `TERMINAL_RUN`** — so `record_terminal` never fired for
+   it. Added. `classify` now derives from `TERMINAL_RUN` with no hand list;
+   `EveryTerminalStateIsHandledTest` iterates the canonical set and fails on any future
+   member that `classify`, `DEAD_END` or `coarse()` does not stop. `WAITING_STEP` was
+   likewise defined three times (`health`, `executor`, `approvals`) and is now one.
+6. **B-08 — two dispatch paths, no ownership rule. Deferred, documented here.**
+   *The paths:* (a) the in-process driver — `scheduler.sweep` → `executor.advance` →
+   `drive_step`, which claims and dispatches **every** `ready` step it sees; (b) the agent API
+   — `GET /v1/work` offers **every** `ready` step to any bearer of the shared token, and
+   `POST /v1/claim` takes it. Nothing marks a step as belonging to one path. *What arbitrates
+   today:* only the claim fence — whoever claims first wins, and after B-01 the loser is
+   refused rather than silently overwritten. *Failure modes if a worker is admitted now:*
+   (1) the driver claims the step a worker was about to take, so the worker starves and the
+   in-process backend pays; (2) a worker's claim lapses mid-work and the driver adopts and
+   re-does the step — correct, but double spend; (3) two workers with the same bearer token
+   are indistinguishable in the audit log (`holder = api-<agent>`). *The one decision owed
+   before any external worker is admitted:* **who dispatches a given step** — per owner
+   (department X is external, the driver skips it), per step (the plan says so), or per
+   installation (`--no-dispatch`, workers only). The repo establishes no owner: `open_work`
+   and `advance` were written independently and neither cites the other. Not decided here.
+7. **B-09 — two approval surfaces. Decided, smallest consolidation applied.** *What each can
+   do:* `approval_server.py` (port 8787) approves/rejects steps **and** approves/rejects
+   memory proposals; the Control Center via `api.py` approves/rejects steps only. *Who
+   authorizes:* the local server — nobody (no auth, single operator, loopback); the API — a
+   registered human with the `decision-owner` role, org-scoped, with a required reason.
+   *Guarantees differ:* the local server cannot name the human (it takes a typed name), the
+   API binds the decision to an identity. *Canonical:* the settled decision of 2026-09-01
+   (architecture decisions, #6) names the Control Center the canonical approval surface.
+   Applied: cancel was added to the API **only**; the local server gains no verb the API
+   lacks; the runbook and the tracker say so. Not applied: retiring the local server — it is
+   still the only surface for memory decisions, and retiring it needs a
+   `POST /v1/memory/{id}/decision` first. That is the exact remaining step.
+8. **A cancelled run under-reports its cost by one dispatch.** Preserved and documented in
+   `cancel_run`, `charge()` and the runbook. Data examined: `runtime/runs/` holds 5 runs, all
+   `completed`, 0 cancelled — the feature is a day old. Consequence at that magnitude: none.
+   Revisit only if cancelled runs become a visible share of `myorg_runs{state="failed"}`.
+9. **`over_budget` re-reads the whole log per ready step per pass.** Verified
+   (`executor.py:321`, `current_state(run_id)` inside the per-step check). Deliberate: a stale
+   ceiling is not a ceiling. Cost is O(ready steps × log length) per pass; today's logs are
+   tens of events. Watch item — the symptom will be `myorg_runtime_snapshot_duration_seconds`
+   and sweep latency rising together. No cache, no index.
+10. **Compatibility.** `/v1/claim` keeps `lease_expires_at` as an alias for one release and
+    adds `claim_token`, `claim_expires_at`, `renew_every_seconds`; `/v1/submit`, `/v1/fail`,
+    `/v1/heartbeat` now **require** `claim_token` (a breaking change for a worker that
+    existed — none did). `MYORG_LEASE_SECONDS` is gone; `MYORG_CLAIM_SECONDS` is the knob.
+    `runtime/runs/leases.json` is deleted; nothing reads it. `cancelled` and
+    `rejected_by_checker` now trigger `record_terminal`, so each writes one more audit line
+    than before. Old run logs need no migration: no stored status changed meaning.
 10. **Nothing here needs a dependency, a service, an agent, or a framework.** Every change is a
     verb on `mutate`, a deletion, a config value, or a generalisation of an enumeration. If an
     implementation starts needing more than that, the design is wrong — stop and come back here.

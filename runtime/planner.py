@@ -143,14 +143,21 @@ def validation_errors(workflow: dict) -> str:
 
 
 def plan(goal: str, workflow_id: str, backend,
-         attempts: int = MAX_REPAIR_ATTEMPTS, log=print) -> dict:
-    """Ask for a workflow, and keep handing back the runtime's own errors until valid."""
+         attempts: int = MAX_REPAIR_ATTEMPTS, log=print, costs: list | None = None) -> dict:
+    """Ask for a workflow, and keep handing back the runtime's own errors until valid.
+
+    `costs` collects what each attempt cost, the way `acceptance_failure` does (B-04): up to
+    `attempts` model calls happen before any run exists to charge them to, so the caller
+    seeds the run with the sum."""
     feedback = ""
     for attempt in range(1, attempts + 1):
         request = PlanRequest(agent=PLANNER, goal=goal, workflow_id=workflow_id,
                               brief=agent_brief(PLANNER), feedback=feedback)
         try:
-            workflow = extract_json(backend(request))
+            answer = backend(request)
+            if costs is not None:
+                costs.append(float(getattr(answer, "cost_usd", 0.0) or 0.0))
+            workflow = extract_json(answer)
         except ExecutorError as error:
             feedback = str(error)
             log(f"  attempt {attempt}: {error}")
