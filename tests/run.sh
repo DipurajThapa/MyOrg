@@ -4,6 +4,10 @@
 # Entry point is unchanged: `bash tests/run.sh`.  Add a module by dropping tests/module-<name>.sh.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
+# The checks print ✅/❌ from Python heredocs. On Windows a piped stdout defaults to cp1252
+# and the print itself raises, turning every such check -- including its own "skipped"
+# message -- into a failure. UTF-8 mode makes stdio UTF-8 on every platform (TEST-05).
+export PYTHONUTF8=1
 
 echo "════════ Enterprise · Acceptance Suite ════════"
 rc=0

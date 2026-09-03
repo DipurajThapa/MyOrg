@@ -59,13 +59,19 @@ echo ""; echo "── C5 Frontmatter YAML valid (agents + skills) ──"
 if command -v python3 >/dev/null; then
   python3 - <<'PY'
 import glob,sys
-try: import yaml
-except Exception: print("  ⚠️  pyyaml missing — skipped"); sys.exit(0)
+# The runtime has zero dependencies and PyYAML is not one of them; it only happens to be
+# on some CI images. Use it when present, and otherwise read the frontmatter as the
+# `key: value` lines it actually is, so the check runs everywhere instead of skipping.
+try: import yaml; load=yaml.safe_load
+except Exception:
+    def load(text):
+        pairs=[l.split(':',1) for l in text.splitlines() if ':' in l and not l.startswith((' ','\t','#'))]
+        return {k.strip(): v.strip() for k,v in pairs}
 bad=0
 for p in sorted(glob.glob('.claude/agents/*.md'))+sorted(glob.glob('.claude/skills/*/SKILL.md')):
-    t=open(p).read()
+    t=open(p,encoding='utf-8').read()
     try:
-        d=yaml.safe_load(t[3:t.find('\n---',3)]); assert 'name' in d and 'description' in d
+        d=load(t[3:t.find('\n---',3)]); assert 'name' in d and 'description' in d
     except Exception as e:
         print(f"  ❌ {p}: {e}"); bad+=1
 print(f"  {'✅ PASS' if not bad else '❌ FAIL'}  frontmatter valid on all files")
