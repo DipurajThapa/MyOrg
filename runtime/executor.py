@@ -313,7 +313,16 @@ def hold_for_human(run_id: str, step_id: str, owner: str, output: str,
 
 
 def finish_approved_hold(run_id: str, step_id: str, step: dict, state: dict, log) -> bool:
-    """A human approved work whose gate could not run. Use it -- do not produce it again."""
+    """A human approved work whose gate could not run. Use it -- do not produce it again.
+
+    Only for that case. A step parked on the cost ceiling was never dispatched, so its
+    "evidence" is the budget notice the runtime wrote -- completing with it handed a
+    checker a receipt to certify as research, and the checker rightly refused twice and
+    ended the run. `approve` sends a budget hold back to `ready` instead, so there is
+    nothing here to finish.
+    """
+    if step.get("held_kind") == "budget":
+        return False
     held = step.get("held_evidence")
     if not held:
         return False
@@ -348,7 +357,9 @@ def over_budget(run_id: str, step_id: str, owner: str, state: dict, log) -> bool
     overspending, which the ceiling's own alert catches. Do not "fix" this into failing
     closed without changing that reasoning first.
     """
-    ceiling = run_ceiling_usd()
+    # A human who approved a budget stop bought this run more room; that allowance lives
+    # on the run, so read it before falling back to the environment's default.
+    ceiling = float(state.get("spend_ceiling_usd") or 0.0) or run_ceiling_usd()
     if not ceiling:
         return False
     try:
@@ -372,6 +383,7 @@ def over_budget(run_id: str, step_id: str, owner: str, state: dict, log) -> bool
     try:
         quietly(core.hold, namespace(run_id=run_id, step=step_id, actor=owner,
                                      evidence=artifact, reason=reason[:MAX_REASON_CHARS], spend=0.0,
+                                     kind="budget",
                                      claim_token=token_for(run_id, step_id),
                                      request_id=request_id(run_id, step_id, "over-budget")))
     except SystemExit as error:

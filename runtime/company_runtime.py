@@ -338,6 +338,24 @@ def approve(args) -> None:
         # already reached its cap came back at 3 of 2 -- waiting for a person cost the step
         # part of the budget its owner set, and the cap stopped meaning anything on this
         # path. Approval resumes the work; it does not re-try it.
+        if step.get("held_kind") == "budget":
+            # Nothing was produced, so there is nothing to accept: approving buys the work.
+            # The step goes back to `ready` to be done properly, the placeholder notice is
+            # dropped so it can never be submitted as a deliverable, and the run gets one
+            # more ceiling's worth -- otherwise the next pass parks it again on the same
+            # spend and the operator approves forever.
+            # The ceiling itself is the driver's, so read it from the environment the driver
+            # reads rather than importing the driver into the state machine.
+            try:
+                ceiling = float(os.environ.get("MYORG_RUN_CEILING_USD", "5") or 0.0)
+            except ValueError:
+                ceiling = 5.0
+            ceiling = float(state.get("spend_ceiling_usd") or 0.0) or ceiling
+            state["spend_ceiling_usd"] = float(state.get("spend_usd", 0.0) or 0.0) + ceiling
+            step.update(status="ready", approver=args.approver, approval_ref=args.approval_ref,
+                        held_evidence="", held_evidence_sha256="", held_kind="")
+            release_claim(step)
+            return
         step.update(status="in_progress", approver=args.approver, approval_ref=args.approval_ref)
         release_claim(step)  # the human hands it back; the next driver claims it
     def audit(state):
@@ -425,7 +443,13 @@ def hold(args) -> None:
         if not step or step["status"] != "in_progress": raise SystemExit(f"step is not in progress: {args.step}")
         if args.actor != step["owner"]: raise SystemExit(f"step owner is {step['owner']}, not {args.actor}")
         check_claim(step, getattr(args, "claim_token", None))
-        step.update(status="awaiting_approval", held_reason=args.reason, held_evidence=proof, held_evidence_sha256=proof_hash)
+        # Why it was parked decides what approving it means. A control that could not run
+        # leaves real work to accept; a cost ceiling leaves nothing, because the step was
+        # never dispatched. Recording the difference is what stops a budget notice being
+        # handed to a checker as though it were the deliverable -- which it was.
+        step.update(status="awaiting_approval", held_reason=args.reason, held_evidence=proof,
+                    held_evidence_sha256=proof_hash,
+                    held_kind=getattr(args, "kind", None) or "ungraded")
         charge(state, step, args)
         release_claim(step)
     def audit(state):
