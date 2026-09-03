@@ -44,6 +44,9 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
 
+# No -User: the task runs as the account registering it, so that account's own `gh auth
+# login` serves scripts/notify_github.py (MYORG_NOTIFY_COMMAND). Register it as the
+# operator who should own the notices, not as an administrator standing in.
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Description "MyOrg autonomous scheduler (supervised sweep loop)" `
     -Force | Out-Null

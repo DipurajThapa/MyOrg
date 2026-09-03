@@ -11,6 +11,8 @@ WorkingDirectory=/opt/myorg
 EnvironmentFile=/etc/myorg/myorg.env
 # The env file must set MYORG_NOTIFY_COMMAND, or this loop runs unattended *and* unheard:
 # every notice it raises stays in the outbox. It warns at start if the value is missing.
+# The shipped sink (scripts/notify_github.py) runs `gh` as User=myorg, which has no login
+# of its own: GH_TOKEN must be in the env file, scoped to Issues on the one repository.
 # --supervised: an idle pass is the normal state of a company waiting for a trigger, so the
 # loop keeps waiting instead of exiting. The ceilings that matter are still per-pass and
 # per-run, inside the state machine.

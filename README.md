@@ -130,10 +130,11 @@ in revenue-critical order: **CRM → email/calendar → support inbox → billin
 `company/connectors.md`, including secrets rules and degraded-mode behavior). Connectors are
 authorized once by you from an interactive session — agents never handle credentials.
 
-Running it unattended? Set `MYORG_NOTIFY_COMMAND` so the company can tell you when it needs
-a decision or has stopped — otherwise notices wait in a file. Stop a run with `cancel-run` or
-the Control Center; stop everything new with `organization-status --status suspended`.
-Details: `docs/OPERATIONS-RUNBOOK.md`.
+Running it unattended? Point `MYORG_NOTIFY_COMMAND` at the shipped GitHub-issue sink
+(`scripts/notify_github.py`) so the company files an issue when it needs a decision or has
+stopped — otherwise notices wait in a file. `python -m runtime.notify test` proves the path.
+Stop a run with `cancel-run` or the Control Center; stop everything new with
+`organization-status --status suspended`. Details: `docs/OPERATIONS-RUNBOOK.md`.
 
 ## Extend it
 

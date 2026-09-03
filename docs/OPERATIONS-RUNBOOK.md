@@ -86,15 +86,49 @@ decision waiting, a run that stopped, a run gone quiet, a lesson proposed — be
 not send anything by itself: sending is an outward action, so delivery is a command *you*
 wire up once.
 
-Set `MYORG_NOTIFY_COMMAND` in `/etc/myorg/myorg.env` to any executable. The scheduler runs it
-once per outstanding notice, every pass, with the notice as JSON in the last argument, and
-marks the notice delivered when it exits 0. A ten-line script that posts to a chat webhook is
-enough. While it is unset the supervised scheduler prints a warning at every start, and
-`python -m runtime.notify list` is the only way to see what is waiting.
+**The contract.** `MYORG_NOTIFY_COMMAND` names a command. The scheduler runs it once per
+outstanding notice, every pass, with the notice as JSON in the **last argument** (never
+through a shell). Exit 0 marks the notice delivered. Anything else leaves it outstanding,
+records the attempt count and the command's stderr on the notice, and tries again next
+pass — `python -m runtime.notify list` shows what is waiting and why the last send failed.
+A notice's id is stable per (kind, run, step); the same fact is sent once, and sent again
+only if it changes. While the command is unset the supervised scheduler warns at every start.
 
-The Prometheus rules in `deploy/prometheus-alerts.yml` are the second channel and watch the
-same conditions from outside — but only if something scrapes `/metrics`. One of the two must
-be real before the company runs unattended.
+**The current operator inbox: GitHub issues.** The repository ships one sink,
+`scripts/notify_github.py`, and it is the authoritative destination for MyOrg notices
+until an incident channel exists:
+
+```
+MYORG_NOTIFY_COMMAND="python3 scripts/notify_github.py"
+MYORG_NOTIFY_GITHUB_REPO="DipurajThapa/MyOrg"
+```
+
+Each notice becomes one issue titled `[MyOrg · <severity>] <subject>`, with the detail, the
+action and the run/step in the body and the notice id in its last line. Closing the issue is
+the acknowledgement. A notice that comes back changed reopens its issue and comments; a plain
+retry adds nothing. `gh` must be able to authenticate as whoever runs the scheduler:
+
+- *Windows task* (`deploy/install-scheduler-windows.ps1`): the task runs as the user who
+  registered it, so that user's own `gh auth login` is used. Nothing more to set.
+- *systemd* (`User=myorg`): that account has no `gh` login. Put a token in
+  `/etc/myorg/myorg.env` as `GH_TOKEN` — a fine-grained token scoped to this repository with
+  **Issues: read and write** and nothing else. Never in the repository, never in the unit file.
+
+**Test it:** `python -m runtime.notify test` sends one synthetic notice through the real
+path and exits 1 (could not write the outbox), 2 (no command set), 3 (the command ran and
+failed — its stderr is printed and kept on the notice), or 0 (the sink accepted it). Then
+open the repository's issues and confirm you see it; that last step is yours.
+
+**What it does and does not guarantee.** Delivered means GitHub stored the issue. It is an
+inbox, not paging: no one is woken, and **GitHub does not notify a person of their own
+actions** — an issue created by the same account that is meant to read it produces no
+notification at all. For a notification to reach the operator, the token that creates
+issues must belong to a different identity (a second account or a GitHub App) and the
+operator must be watching the repository. Until that is true, the inbox works and the
+alert does not.
+
+The Prometheus rules in `deploy/prometheus-alerts.yml` are a second channel that watches the
+same conditions from outside — but only if something scrapes `/metrics`.
 
 ## Approvals waiting
 

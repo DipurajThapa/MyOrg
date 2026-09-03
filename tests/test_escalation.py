@@ -178,8 +178,67 @@ class EscalationTest(unittest.TestCase):
         self.escalation.scan(log=self.logs.append)
         self.notify.deliver(log=self.logs.append)
 
-        self.assertTrue(self.notify.outstanding(),
-                        "a failed send must not silently drop the notice")
+        waiting = self.notify.outstanding()
+        self.assertTrue(waiting, "a failed send must not silently drop the notice")
+        # And the failure is a fact on the notice, not only a log line (NOTIFY-01).
+        self.assertEqual(waiting[0].attempts, 1)
+        self.assertIn("FileNotFoundError", waiting[0].last_error)
+        self.assertIn("delivery failed 1x", self.notify.render(waiting))
+        self.notify.deliver(log=self.logs.append)
+        self.assertEqual(self.notify.outstanding()[0].attempts, 2)
+
+    def test_a_failing_command_s_own_words_are_kept(self):
+        script = Path(self._tmp.name) / "refuse.py"
+        script.write_text("import sys; sys.stderr.write('GitHub said no\\n'); sys.exit(3)\n",
+                          encoding="utf-8")
+        os.environ["MYORG_NOTIFY_COMMAND"] = f'"{__import__("sys").executable}" "{script}"'
+        self.park("esc-refused")
+        self.escalation.scan(log=self.logs.append)
+        self.notify.deliver(log=self.logs.append)
+        self.assertEqual(self.notify.outstanding()[0].last_error, "exit 3: GitHub said no")
+
+    # --- once told, a person is not told the same thing every minute ------------------
+
+    def test_a_delivered_notice_is_not_raised_again_while_nothing_changed(self):
+        script = Path(self._tmp.name) / "count.py"
+        counter = Path(self._tmp.name) / "count.txt"
+        script.write_text(
+            "import pathlib\n"
+            f"p = pathlib.Path(r'{counter}'); p.write_text(str(int(p.read_text() or 0) + 1) if p.exists() else '1')\n",
+            encoding="utf-8")
+        os.environ["MYORG_NOTIFY_COMMAND"] = f'"{__import__("sys").executable}" "{script}"'
+        self.park("esc-once")
+        for _ in range(3):  # three sweeps, the run still waiting, nothing new
+            self.escalation.scan(log=self.logs.append)
+            self.notify.deliver(log=self.logs.append)
+        self.assertEqual(counter.read_text(), "1", "the same fact must be sent once")
+        # A changed fact under the same id is sent again.
+        notice = next(n for n in self.notify.read_all() if n.run_id == "esc-once")
+        self.notify.raise_notice(notice.kind, notice.subject, notice.detail + " (3 of 4 done)",
+                                 notice.action, org_id=notice.org_id,
+                                 run_id=notice.run_id, step_id=notice.step_id)
+        self.notify.deliver(log=self.logs.append)
+        self.assertEqual(counter.read_text(), "2")
+
+    # --- the smoke test says which stage failed -----------------------------------------
+
+    def test_the_smoke_test_names_the_failing_stage(self):
+        os.environ.pop("MYORG_NOTIFY_COMMAND", None)
+        self.assertEqual(self.notify.smoke(log=self.logs.append), 2)
+        self.assertTrue(any("stage 2 FAIL" in line for line in self.logs))
+
+        os.environ["MYORG_NOTIFY_COMMAND"] = "no-such-command-anywhere"
+        self.assertEqual(self.notify.smoke(log=self.logs.append), 3)
+        self.assertTrue(any("stage 3 FAIL" in line and "FileNotFoundError" in line
+                            for line in self.logs))
+
+        ok = Path(self._tmp.name) / "ok.py"
+        ok.write_text("import sys; sys.exit(0)\n", encoding="utf-8")
+        os.environ["MYORG_NOTIFY_COMMAND"] = f'"{__import__("sys").executable}" "{ok}"'
+        self.assertEqual(self.notify.smoke(log=self.logs.append), 0)
+        self.assertTrue(any("stage 4" in line for line in self.logs))
+        smoke = [n for n in self.notify.read_all() if n.kind == self.notify.SMOKE_TEST]
+        self.assertTrue(smoke and all(n.delivered for n in smoke[-1:]))
 
 
 if __name__ == "__main__":
