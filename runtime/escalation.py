@@ -25,6 +25,7 @@ DEAD_END = {
     "rejected": "was rejected at a human gate",
     "rejected_by_checker": "was rejected by its checker",
     "blocked_human": "reached an action that is never automated",
+    "cancelled": "was stopped by a person",
 }
 
 

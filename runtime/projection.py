@@ -47,6 +47,7 @@ COARSE_STATUS = {
     "completed": "completed",
     "rejected": "cancelled",
     "rejected_by_checker": "cancelled",
+    "cancelled": "cancelled",
 }
 STEP_COLUMNS = ("owner", "checker", "action", "risk", "status", "attempts",
                 "max_attempts", "review_cycles", "max_review_cycles", "depends_on",

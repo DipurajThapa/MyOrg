@@ -133,6 +133,36 @@ class MyOrgService:
         return {"run_id": run_id, "step": step_id, "decision": body["decision"],
                 "status": core.read_events(run_id)[-1]["steps"][step_id]["status"]}
 
+    def cancel_run(self, principal: Principal, run_id: str, body: dict, request_id: str) -> dict:
+        """Stop a run, as a named human, with a stated reason (B-02). Same authority and
+        same org scoping as a step decision: an agent cannot stop its own run to escape a
+        gate, and another org's run answers exactly like a run that does not exist."""
+        _require(principal, "decision-owner")
+        if principal.actor_type != "human":
+            raise Forbidden("stopping a run requires a registered human identity")
+        if set(body) != {"reason"}:
+            raise ServiceError("a cancel takes exactly one field: reason")
+        reason = str(body["reason"]).strip()
+        if not 1 <= len(reason) <= 200 or not reason.isprintable():
+            raise ServiceError("reason must be 1..200 printable characters on one line")
+        if not ID_RE.fullmatch(str(run_id)):
+            raise ServiceError("invalid run id")
+
+        from runtime import company_runtime as core
+        try:
+            state = core.read_events(run_id)[-1]
+        except SystemExit as error:
+            raise ServiceError(f"unknown run: {run_id}") from error
+        if state.get("org_id") != principal.org_id:
+            raise ServiceError(f"unknown run: {run_id}")
+        who = principal.display_name or principal.actor_id
+        try:
+            _quietly(core.cancel_run, argparse.Namespace(
+                run_id=run_id, approver=who, reason=reason, request_id=request_id))
+        except SystemExit as error:
+            raise ServiceError(str(error)) from error
+        return {"run_id": run_id, "status": core.read_events(run_id)[-1]["run_status"]}
+
     def request_approval(self, principal: Principal, body: dict, request_id: str) -> dict:
         _require(principal, "maker", "chief-of-staff", "system-admin")
         required = {"run_id", "connector_id", "action", "target_ref", "payload_ref", "payload_sha256"}

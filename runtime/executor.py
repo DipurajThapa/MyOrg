@@ -386,6 +386,11 @@ def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
         record_failure(run_id, step_id, owner, str(error), spend=sum(costs))
         return
     costs.append(float(getattr(output, "cost_usd", 0.0)))
+    # A human may have cancelled the run while the agent was working. The work is already
+    # paid for; the grade is not. Skip it -- `finish` would be refused anyway.
+    if current_state(run_id)["run_status"] != "active":
+        log(f"  {step_id}: run ended while the agent was working -- output discarded")
+        return
     rejection = structural_failure(output)
     if rejection is None:
         try:

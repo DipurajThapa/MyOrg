@@ -130,6 +130,23 @@ the scheduler rather than approving repeatedly.
 `python -m runtime.company_runtime extend-budget <run> --cycles 10 --approver <you>
 --request-id <id>`. Completed steps are kept; nothing is re-run.
 
+## Stopping a run
+
+A run that should not continue — wrong goal, duplicate, a trigger that fired on bad data —
+is stopped by a person, not by waiting for a gate it may never reach:
+
+`python -m runtime.company_runtime cancel-run <run> --approver <you> --reason "<why>"
+--request-id <id>`, or `POST /v1/runs/<run>/cancel` with `{"reason": "..."}` as a
+`decision-owner`.
+
+It is terminal. Every finished step and its evidence stays; the audit log records who stopped
+it and why. A step the agent was mid-way through is discarded when it returns — that attempt's
+cost is the one figure the run's `spend_usd` will not include. To do the work again, start a
+new run; the old one is the record of what was abandoned.
+
+Stopping *all* new work (rather than one run) is B-03 in `docs/EXECUTION-TRACKER.md`; until
+it lands, disable the schedules in the Control Center and cancel what is moving.
+
 ## Autonomy metrics blind
 
 `MyOrgAutonomyMetricsBlind` (`myorg_runtime_snapshot_ok 0`) means the runtime cannot read its

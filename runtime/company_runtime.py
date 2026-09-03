@@ -22,7 +22,7 @@ POLICY_PATH = ROOT / "runtime" / "policy.json"
 DEFAULT_ORG = os.environ.get("MYORG_ORG_ID", "default")
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 TERMINAL = {"completed", "rejected", "blocked_human", "blocked_retry_limit"}
-TERMINAL_RUN = TERMINAL | {"blocked_cycle_limit", "blocked_review_limit"}
+TERMINAL_RUN = TERMINAL | {"blocked_cycle_limit", "blocked_review_limit", "cancelled"}
 CLAIM_SECONDS = int(os.environ.get("MYORG_CLAIM_SECONDS", "600"))
 MESSAGE_KINDS = {"handoff", "question", "answer", "feedback", "decision"}
 CLASSIFICATIONS = {"public", "internal", "confidential"}
@@ -471,6 +471,38 @@ def extend_budget(args) -> None:
     print(f"active\tmax_cycles={ceiling}")
 
 
+def cancel_run(args) -> None:
+    """A named human stops a run that is still going. Terminal; nothing is deleted.
+
+    B-02. Every other stop in this runtime is the machine stopping itself -- a ceiling, a
+    retry limit, a gate the plan happened to contain. `reject` is the only human stop and it
+    only works on a step already parked, so a run of green steps could not be stopped at
+    all. This is the missing verb: it ends the run through the same path as every other
+    terminal state, keeps every artifact, and records who did it and why.
+
+    A dispatch already in flight finishes on its own and then fails its `complete` against
+    the terminal run. That last attempt's cost is charged on the transition that is refused,
+    so a cancelled run under-reports by at most one dispatch and one grade. Accepted: the
+    alternative is a spend event that costs a cycle to say what was already spent.
+    """
+    if not str(getattr(args, "approver", "")).strip():
+        raise SystemExit("cancelling a run is a human decision -- who did it?")
+    reason = str(getattr(args, "reason", "")).strip()
+    if not 1 <= len(reason) <= 200:
+        raise SystemExit("a cancel needs a reason of 1..200 characters")
+    def change(state):
+        state.update(run_status="cancelled", cancelled_by=args.approver, cancel_reason=reason)
+        for step in state["steps"].values():
+            if step["status"] == "in_progress": release_claim(step)  # nobody may finish it now
+    def audit(state):
+        done = sum(s["status"] == "completed" for s in state["steps"].values())
+        return {"actor": args.approver, "action": "run.cancelled", "category": "yellow",
+                "target": args.run_id, "approval": "granted", "outcome": "blocked",
+                "note": f"stopped by {args.approver} after {done}/{len(state['steps'])} steps: {reason}"}
+    mutate(args.run_id, args.request_id, "run.cancelled", args.approver, args.run_id, change, audit)
+    print("cancelled")
+
+
 def complete(args) -> None:
     proof,proof_hash=evidence_path(args.evidence)
     def change(state):
@@ -611,6 +643,7 @@ def parser():
         command.set_defaults(func=func)
     command=commands.add_parser("expire-claim"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor"); command.add_argument("--request-id",required=True); command.set_defaults(func=expire_claim)
     command=commands.add_parser("extend-budget"); command.add_argument("run_id"); command.add_argument("--cycles",type=int,required=True); command.add_argument("--approver",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=extend_budget)
+    command=commands.add_parser("cancel-run"); command.add_argument("run_id"); command.add_argument("--approver",required=True); command.add_argument("--reason",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=cancel_run)
     command=commands.add_parser("status"); command.add_argument("run_id"); command.add_argument("--json",action="store_true"); command.set_defaults(func=status)
     return result
 
