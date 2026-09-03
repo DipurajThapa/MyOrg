@@ -109,7 +109,8 @@ the acknowledgement. A notice that comes back changed reopens its issue and comm
 retry adds nothing. `gh` must be able to authenticate as whoever runs the scheduler:
 
 - *Windows task* (`deploy/install-scheduler-windows.ps1`): the task runs as the user who
-  registered it, so that user's own `gh auth login` is used. Nothing more to set.
+  registered it, so that user's own `gh auth login` is used. Nothing more to set. It runs
+  hidden under `pythonw.exe`; its lines go to `runtime/runs/_scheduler.log` (`--log-file`).
 - *systemd* (`User=myorg`): that account has no `gh` login. Put a token in
   `/etc/myorg/myorg.env` as `GH_TOKEN` — a fine-grained token scoped to this repository with
   **Issues: read and write** and nothing else. Never in the repository, never in the unit file.

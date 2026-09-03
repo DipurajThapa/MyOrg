@@ -265,7 +265,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-intake", action="store_true",
                         help="drive existing runs only; start nothing new")
     parser.add_argument("--model")
+    parser.add_argument("--log-file",
+                        help="append every line here instead of the console -- for a service "
+                             "with no window (pythonw, systemd)")
     args = parser.parse_args(argv)
+
+    if args.log_file:
+        # One redirect, not a logging framework: everything this process prints, including
+        # a traceback, lands in the file. Line-buffered so a tail shows each pass as it ends.
+        handle = open(args.log_file, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+        sys.stdout = sys.stderr = handle
+        print(f"scheduler starting at {datetime.now(timezone.utc).isoformat(timespec='seconds')}"
+              f" pid={os.getpid()} args={' '.join(argv if argv is not None else sys.argv[1:])}")
 
     if args.interval < 1 or args.max_passes < 1:
         print("interval and max-passes must be at least 1", file=sys.stderr)

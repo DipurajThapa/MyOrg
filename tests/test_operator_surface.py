@@ -38,6 +38,22 @@ class NoticeDeliveryIsDiscoverableTest(unittest.TestCase):
             scheduler.main(["--help"])
         self.assertIn("MYORG_NOTIFY_COMMAND", out.getvalue())
 
+    def test_the_scheduler_can_write_its_lines_to_a_file_for_a_windowless_service(self):
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as runs:
+            log = Path(runs) / "_scheduler.log"
+            result = subprocess.run(
+                [sys.executable, "-m", "runtime.scheduler", "--once", "--backend", "stub",
+                 "--no-intake", "--log-file", str(log)],
+                cwd=ROOT, env={**os.environ, "MYORG_RUNS_DIR": runs},
+                capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "", "nothing may reach the console")
+            text = log.read_text(encoding="utf-8")
+            self.assertIn("scheduler starting", text)
+            self.assertIn("idle", text)
+
     def test_a_supervised_loop_warns_once_at_start_when_nobody_will_be_told(self):
         from runtime import scheduler
         from runtime.executor import StubBackend

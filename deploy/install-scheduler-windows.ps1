@@ -9,8 +9,9 @@
     logs on and is restarted by Windows if it stops -- the nearest equivalent of
     Restart=on-failure for a task that runs as an interactive user.
 
-    Stopping the task sends a break to the process, which finishes the pass it is in rather
-    than stranding a claimed step.
+    It runs under pythonw.exe -- no console window -- and writes one line per pass to
+    runtime\runs\_scheduler.log. Stopping the task ends the process; a step it was in the
+    middle of keeps its claim until that expires, and the next pass adopts it.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File deploy/install-scheduler-windows.ps1 `
@@ -37,8 +38,13 @@ if (-not $env:MYORG_NOTIFY_COMMAND) {
     Write-Warning "MYORG_NOTIFY_COMMAND is not set for this account: the loop will run unattended and unheard (see docs/OPERATIONS-RUNBOOK.md#being-told)."
 }
 
-$action = New-ScheduledTaskAction -Execute $Python `
-    -Argument "-m runtime.scheduler --supervised --interval $IntervalSeconds" `
+# Run it with pythonw.exe -- no console window -- and send every line to a log file
+# instead. pythonw sits next to python.exe in every standard install.
+$Pythonw = Join-Path (Split-Path -Parent $Python) "pythonw.exe"
+if (-not (Test-Path -LiteralPath $Pythonw)) { throw "pythonw.exe not found beside $Python" }
+$LogFile = Join-Path $RepoRoot "runtime\runs\_scheduler.log"
+$action = New-ScheduledTaskAction -Execute $Pythonw `
+    -Argument "-m runtime.scheduler --supervised --interval $IntervalSeconds --log-file `"$LogFile`"" `
     -WorkingDirectory $RepoRoot
 
 # At logon of the registering user, not at boot: the task runs as that user interactively
@@ -63,9 +69,6 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
 Write-Output "Registered scheduled task '$TaskName'."
 Write-Output "Start it now with:  Start-ScheduledTask -TaskName $TaskName"
 Write-Output "Stop it with:       Stop-ScheduledTask  -TaskName $TaskName"
-# An interactive task opens a console window: one line per pass. That window is the loop's
-# log for as long as it is open; nothing persists it. Closing the window kills the loop
-# (Windows restarts it after a minute) -- stop it properly with Stop-ScheduledTask.
-Write-Output "It runs in a console window while you are logged on: one line per pass. That"
-Write-Output "window is its log. Do not close it to stop it -- use Stop-ScheduledTask. Its state"
-Write-Output "is also readable from: python -m runtime.health, python -m runtime.notify list, /metrics."
+Write-Output "It runs in the background (no window). One line per pass goes to:"
+Write-Output "  $LogFile"
+Write-Output "Its state is also readable from: python -m runtime.health, python -m runtime.notify list, /metrics."
