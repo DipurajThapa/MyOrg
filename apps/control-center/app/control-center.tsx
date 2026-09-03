@@ -64,6 +64,18 @@ type Run = {
   can_cancel: boolean;
 };
 
+/** A lesson or fact an agent wants the company to keep. Mirrors GET /v1/memory/proposals. */
+type Proposal = {
+  id: string;
+  kind: "lesson" | "fact";
+  subject: string;
+  body: string;
+  author: string;
+  source_run: string;
+  source_step: string;
+  proposed_at: string;
+};
+
 /** One parked step waiting on a person. Mirrors GET /v1/decisions exactly. */
 type Decision = {
   run_id: string;
@@ -167,6 +179,9 @@ export default function ControlCenter({
   const [notice, setNotice] = useState("");
   const [decisions, setDecisions] = useState<Decision[] | null>(null);
   const [decisionsError, setDecisionsError] = useState("");
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [proposalReason, setProposalReason] = useState("");
+  const [decidingProposal, setDecidingProposal] = useState("");
   const [schedules, setSchedules] = useState<Schedule[] | null>(null);
   const [inFlight, setInFlight] = useState<InFlightReceipt[] | null>(null);
   const [runs, setRuns] = useState<Run[] | null>(null);
@@ -349,8 +364,14 @@ export default function ControlCenter({
     // Nothing is set before the first await on purpose: an effect must not change state
     // synchronously, or React re-renders before the fetch has said anything.
     try {
-      const queue = await runtimeRequest<Decision[]>("/v1/decisions");
+      // Proposals ride alongside the queue but never block it: a person who cannot see
+      // what agents want remembered must still be able to decide a parked step.
+      const [queue, remembered] = await Promise.all([
+        runtimeRequest<Decision[]>("/v1/decisions"),
+        runtimeRequest<Proposal[]>("/v1/memory/proposals").catch(() => [] as Proposal[]),
+      ]);
       setDecisions(queue);
+      setProposals(remembered);
       setDecisionsError("");
       setSelectedDecision((current) => {
         const stillThere = queue.some((d) => `${d.run_id}/${d.step}` === current);
@@ -433,6 +454,30 @@ export default function ControlCenter({
       setNotice(error instanceof Error ? error.message : "The run could not be stopped");
     } finally {
       setStopping("");
+    }
+  }
+
+  // B-09: the third human decision. Keeping a proposal changes what every future agent is
+  // told, so it takes the same identity, role and reason as a step decision.
+  async function decideProposal(proposal: Proposal, verdict: "keep" | "discard") {
+    const reason = proposalReason.trim();
+    if (!reason) {
+      setNotice("Say why. Keeping or discarding a lesson is recorded against your name.");
+      return;
+    }
+    setDecidingProposal(proposal.id);
+    try {
+      await runtimeRequest(`/v1/memory/${proposal.id}/decision`,
+        { method: "POST", body: JSON.stringify({ decision: verdict, reason }) });
+      setNotice(verdict === "keep"
+        ? `Kept. Every agent doing "${proposal.subject}" will be told this from now on.`
+        : `Discarded. "${proposal.subject}" will not be shown to any agent.`);
+      setProposalReason("");
+      await loadDecisions();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "The decision could not be recorded");
+    } finally {
+      setDecidingProposal("");
     }
   }
 
@@ -777,6 +822,49 @@ export default function ControlCenter({
                           </button>
                         );
                       })}
+                    </div>
+                  </article>
+                )}
+
+                {decisions !== null && !decisionsError && proposals.length > 0 && (
+                  <article className="panel run-detail">
+                    <div className="run-title-row">
+                      <div><span className="mono-label">{proposals.length} TO REMEMBER?</span><h2>Things agents want kept</h2></div>
+                    </div>
+                    <p>
+                      A checker sent work back and wrote down why. Keep it, and every future agent doing
+                      that kind of work is told. Discard it, and nobody is. Either way it is recorded
+                      against your name.
+                    </p>
+                    <label className="field">
+                      <span>Why (recorded)</span>
+                      <input
+                        type="text"
+                        value={proposalReason}
+                        maxLength={200}
+                        placeholder="e.g. true, and cheap to check every time"
+                        onChange={(event) => setProposalReason(event.target.value)}
+                      />
+                    </label>
+                    <div className="autonomy-list">
+                      {proposals.map((proposal) => (
+                        <div key={proposal.id} className="autonomy-item">
+                          <span className="mono-label">
+                            {proposal.kind.toUpperCase()} · {proposal.author}
+                            {proposal.source_run ? ` · ${proposal.source_run}/${proposal.source_step}` : ""}
+                          </span>
+                          <h3>{proposal.subject}</h3>
+                          <p>{proposal.body}</p>
+                          <div className="decision-actions">
+                            <button type="button" className="primary-action" disabled={decidingProposal === proposal.id || !proposalReason.trim()} onClick={() => void decideProposal(proposal, "keep")}>
+                              {decidingProposal === proposal.id ? "Recording…" : "Remember this"}
+                            </button>
+                            <button type="button" className="secondary-action" disabled={decidingProposal === proposal.id || !proposalReason.trim()} onClick={() => void decideProposal(proposal, "discard")}>
+                              Discard
+                            </button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </article>
                 )}

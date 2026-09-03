@@ -97,7 +97,6 @@ done
 check "every agent has a ## Charter"        "[ $nochart -eq 0 ]"
 check "every agent states Decision rights"  "[ $norights -eq 0 ]"
 check "durable organization-management skill" "[ -f .claude/skills/organization-management/SKILL.md ]"
-check "organization state manager present" "[ -f scripts/org_state.py ]"
 check "controlled runtime present" "[ -f runtime/company_runtime.py ] && [ -f runtime/policy.json ]"
 check "runtime audit records residual gaps" "grep -q 'Approval identity not authenticated' docs/RUNTIME-AUDIT.md"
 check "exchange and maker-checker audit present" "[ -f docs/EXCHANGE-MAKER-CHECKER-AUDIT.md ]"

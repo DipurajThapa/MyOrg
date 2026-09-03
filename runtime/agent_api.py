@@ -159,8 +159,6 @@ def claim(body: dict) -> dict:
             # Renewing is a run event (it costs a cycle), so heartbeat at about half the
             # claim's life, not every few seconds.
             "renew_every_seconds": core.CLAIM_SECONDS // 2,
-            # Deprecated alias of claim_expires_at; removed in 0.6.0 (pyproject version).
-            "lease_expires_at": held["claim_expires_at"],
             "revision": fresh["workflow_revision"], "prompt": request.prompt()}
 
 
@@ -216,8 +214,7 @@ def heartbeat(body: dict) -> dict:
             request_id=request_id(step_id)))
     except SystemExit as error:
         raise ApiError(409, str(error)) from error
-    return {"claim_expires_at": expires,
-            "lease_expires_at": expires}  # deprecated alias, removed in 0.6.0
+    return {"claim_expires_at": expires}
 
 
 def give_up(body: dict) -> dict:

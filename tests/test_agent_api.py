@@ -120,7 +120,7 @@ class AgentApiTest(unittest.TestCase):
         step = self.executor.current_state("api-claim")["steps"]["frame-goal"]
         self.assertEqual(body["claim_token"], step["claim_token"])
         self.assertEqual(body["claim_expires_at"], step["claim_expires_at"])
-        self.assertEqual(body["lease_expires_at"], step["claim_expires_at"])  # old name kept
+        self.assertNotIn("lease_expires_at", body)  # the alias went with 0.6.0
         self.assertGreater(body["renew_every_seconds"], 0)
         self.assertTrue(body["revision"])
 

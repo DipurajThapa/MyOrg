@@ -172,6 +172,42 @@ class MyOrgService:
             raise ServiceError(str(error)) from error
         return {"run_id": run_id, "status": core.read_events(run_id)[-1]["run_status"]}
 
+    def memory_proposals(self, principal: Principal) -> list[dict]:
+        """Lessons and facts agents want the company to keep, waiting on a person."""
+        from runtime import memory
+        return [{"id": e.id, "kind": e.kind, "subject": e.subject, "body": e.body,
+                 "author": e.author, "source_run": e.source_run, "source_step": e.source_step,
+                 "proposed_at": e.ts}
+                for e in memory.proposals(org_id=principal.org_id)]
+
+    def decide_memory(self, principal: Principal, entry_id: str, body: dict,
+                      request_id: str) -> dict:
+        """Keep or discard a proposal, as a named human, with a stated reason (B-09).
+
+        This is the third human decision the API carries. The first two act on a *run*
+        (`decide_step` moves a parked workflow step) or on a *connector action*
+        (`decide_approval` unlocks one exact outward call). This one changes what every
+        future agent is told, so it takes the same authority as a step decision."""
+        _require(principal, "decision-owner")
+        if principal.actor_type != "human":
+            raise Forbidden("memory decisions require a registered human identity")
+        if set(body) != {"decision", "reason"} or body["decision"] not in {"keep", "discard"}:
+            raise ServiceError("decision must be keep/discard with a reason")
+        reason = str(body["reason"]).strip()
+        if not 1 <= len(reason) <= 200 or not reason.isprintable():
+            raise ServiceError("reason must be 1..200 printable characters on one line")
+        if not ID_RE.fullmatch(str(entry_id)):
+            raise ServiceError("invalid memory entry id")
+        from runtime import memory
+        who = principal.display_name or principal.actor_id
+        status = memory.LIVE if body["decision"] == "keep" else "rejected"
+        try:
+            entry = memory.decide(entry_id, status, who, org_id=principal.org_id, note=reason)
+        except SystemExit as error:
+            raise ServiceError(str(error)) from error
+        return {"id": entry.id, "decision": body["decision"], "status": entry.status,
+                "decided_by": entry.decided_by}
+
     def request_approval(self, principal: Principal, body: dict, request_id: str) -> dict:
         _require(principal, "maker", "chief-of-staff", "system-admin")
         required = {"run_id", "connector_id", "action", "target_ref", "payload_ref", "payload_sha256"}

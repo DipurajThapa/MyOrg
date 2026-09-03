@@ -303,6 +303,15 @@ class MyOrgHandler(BaseHTTPRequestHandler):
                                                          self._json(), self._request_id())
                 self._send(HTTPStatus.OK, result)
                 return
+            if method == "GET" and path == "/v1/memory/proposals":
+                self._send(HTTPStatus.OK, self.server.service.memory_proposals(principal))
+                return
+            if method == "POST" and len(parts) == 4 and parts[:2] == ["v1", "memory"] and parts[3] == "decision":
+                if not RESOURCE_ID_RE.fullmatch(parts[2]):
+                    raise BadRequest("invalid memory entry id")
+                result = self.server.service.decide_memory(principal, parts[2], self._json(), self._request_id())
+                self._send(HTTPStatus.OK, result)
+                return
             if method == "POST" and len(parts) == 4 and parts[:2] == ["v1", "runs"] and parts[3] == "cancel":
                 if not RESOURCE_ID_RE.fullmatch(parts[2]):
                     raise BadRequest("invalid run id")

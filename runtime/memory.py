@@ -60,6 +60,7 @@ class Entry:
     source_step: str = ""
     decided_by: str = ""
     ts: str = ""
+    note: str = ""
 
     @property
     def live(self) -> bool:
@@ -116,7 +117,8 @@ def current(org_id: str = DEFAULT_ORG) -> list[Entry]:
     return [Entry(id=r["id"], org_id=org_id, kind=r["kind"], subject=r["subject"],
                   body=r["body"], author=r["author"], status=r["status"],
                   source_run=r.get("source_run", ""), source_step=r.get("source_step", ""),
-                  decided_by=r.get("decided_by", ""), ts=r.get("ts", ""))
+                  decided_by=r.get("decided_by", ""), ts=r.get("ts", ""),
+                  note=r.get("note", ""))
             for r in latest.values()]
 
 
@@ -142,8 +144,11 @@ def propose(subject: str, body: str, author: str, kind: str = "lesson",
 
 
 def decide(entry_id: str, status: str, decided_by: str,
-           org_id: str = DEFAULT_ORG) -> Entry:
-    """A human accepting, refusing, or retiring something the company believes."""
+           org_id: str = DEFAULT_ORG, note: str = "") -> Entry:
+    """A human accepting, refusing, or retiring something the company believes.
+
+    Appending the same decision twice is harmless -- the latest record wins and says the
+    same thing -- so a retried request needs no idempotency key of its own."""
     if status not in STATUSES:
         raise SystemExit(f"unknown status: {status}")
     if not decided_by.strip():
@@ -156,7 +161,7 @@ def decide(entry_id: str, status: str, decided_by: str,
         "id": entry_id, "ts": now(), "kind": entry.kind, "subject": entry.subject,
         "body": entry.body, "author": entry.author, "status": status,
         "source_run": entry.source_run, "source_step": entry.source_step,
-        "decided_by": decided_by.strip()})
+        "decided_by": decided_by.strip(), "note": " ".join(note.split())[:200]})
     return next(e for e in current(org_id) if e.id == entry_id)
 
 

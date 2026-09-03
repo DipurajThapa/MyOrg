@@ -101,3 +101,20 @@ A gated action with no matching log entry is a process failure — raise it in r
 *(This section ships with the audit-log module. If you remove that module, also remove this
 section, the COO's audit-log-oversight line, and the routing-map's audit-log rows — the module
 test's header lists the full checklist.)*
+
+## 9. Three kinds of human decision — and the one place they are made
+
+The Control Center is the only surface a person decides on; every decision is bound to a
+registered human, a role, an organization and a stated reason. The runtime carries three
+decisions that look alike and are not:
+
+| Decision | Acts on | Verb | What "yes" does |
+|---|---|---|---|
+| **Step decision** (`decide_step`) | one parked step of a *run* in the run log | `POST /v1/decisions/{run}/{step}` | moves the step: approve → it runs; reject → the run ends |
+| **Connector approval** (`decide_approval`) | one exact *outward call* (hashed connector, action, target, payload) in SQLite | `POST /v1/approvals/{id}/decision` | unlocks that call once; the gateway consumes it with an idempotency key |
+| **Memory decision** (`decide_memory`) | one *proposal* in the company's memory | `POST /v1/memory/{id}/decision` | keep → every future agent is told it; discard → it is never shown |
+
+A step decision never authorizes an outward call — a yellow step that reaches a connector
+still needs its own approval record. A connector approval never moves a step. Neither
+changes what agents are told; only a memory decision does. Stopping a run (`cancel-run`) is
+a fourth human verb, not a decision on anything pending: it ends the run and keeps the record.

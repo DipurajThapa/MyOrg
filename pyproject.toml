@@ -1,6 +1,6 @@
 [project]
 name = "myorg-runtime"
-version = "0.5.0"
+version = "0.6.0"
 description = "The governed execution runtime behind the MyOrg Company OS"
 requires-python = ">=3.11"
 

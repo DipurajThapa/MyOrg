@@ -129,18 +129,19 @@ Compact table, then a detail block for every row that is active or next.
 
 | ID | Outcome | Status | Pri | Depends on | Next action |
 |---|---|---|---|---|---|
-| **NOTIFY-01** | A person is actually told when the company needs one | **Blocked** on the human half only — discoverability **done 2026-09-03**: env example, unit file, runbook "Being told", README, `--help`, startup warning; 3 tests | **P0** | — | Operator sets `MYORG_NOTIFY_COMMAND` to a real command and confirms one notice arrives |
+| **NOTIFY-01** | A person is actually told when the company needs one | **Blocked** on the human half only — discoverability **done 2026-09-03**: env example, unit file, runbook "Being told", README, `--help`, startup warning; 3 tests. Re-checked 2026-09-03 (later): no destination exists anywhere — `MYORG_NOTIFY_COMMAND` unset, no `/etc/myorg`, no `deploy/*.env` beyond the example, and `company/connectors.md` lists Slack/Gmail only as unauthorized department connectors. Nothing to configure without inventing a destination | **P0** | — | **Human decision:** name the channel (chat webhook, mail, pager) and supply the command or credential; then one delivered notice closes this |
 | **B-02** | A named human can stop any non-terminal run in one action | **Done 2026-09-03** — verb, `POST /v1/runs/{id}/cancel`, `GET /v1/runs`, Control Center "Runs" panel with Stop, terminal handling derived from `TERMINAL_RUN`, `myorg_runs_cancelled` gauge, runbook; 14 tests | — | — | Watch `myorg_runs_cancelled` (§6) |
 | **B-01** | One liveness record; the external-worker fence is real | **Done 2026-09-03** — `leases.py` deleted; `/v1/claim` returns `claim_token`; submit/heartbeat/fail require it (400 missing, 409 stale); `renew-claim` mutation; driver adopts an unrenewed claim; the full takeover sequence (claim → natural expiry → adoption → every stale write refused → new holder completes) is one boundary test | — | — | State fencing only; side-effect replay is B-08 §3 |
 | **B-04** | Every model call is charged to a run or documented as uncharged | **Done 2026-09-03** — measured (§5.4), then: checker review charged on `check-*`; plan cost seeded at `create_run` (`planning_spend_usd`); brief documented as the one accepted undercount; 4 tests | — | — | Re-derive the `$5` default once a real planned run is measured |
 | **B-03** | `suspended` means the tenant is off — for the autonomous paths too | **Done 2026-09-03** (re-verified same day) — intake skips, sweep drives nothing, `advance` halts before its next dispatch, agent API offers/claims nothing, webhook refuses, tokens were already refused; in-flight step finishes and records itself; gauge + 6 h alert; 7 tests | — | — | — |
 | **B-05a** | Total spend is alerted on | **Done 2026-09-03** — `MyOrgTotalSpendHigh` at $25 placeholder | — | NOTIFY-01 (to be heard) | Re-threshold after a week of data |
-| **B-09** | One authoritative approval surface | **Done 2026-09-03** — step decisions on `approval_server.py` are **off by default**; `MYORG_LOCAL_STEP_DECISIONS=1` is the deprecated compatibility path, removed in 0.6.0. Memory decisions stay there until the API has a route. Cancel exists on the API only | P2 | — | `POST /v1/memory/{id}/decision`, then delete the local server's `/decide` and the switch |
+| **B-09** | One authoritative approval surface | **Done 2026-09-03 (finished, 0.6.0)** — `GET /v1/memory/proposals` + `POST /v1/memory/{id}/decision` (decision-owner, human, org-scoped, reason recorded on the entry); Control Center queue shows "Things agents want kept" with Keep/Discard; `approval_server.py`, its tests and `MYORG_LOCAL_STEP_DECISIONS` deleted; 7 tests, one of which fails if the console ever comes back. A-07 written as `operating-principles.md` §9 | — | — | — |
+| **A-07** | Document `decide_step` vs `decide_approval` | **Done 2026-09-03** — `company/operating-principles.md` §9: the three human decisions (step / connector approval / memory), what each acts on, what "yes" does, and that none implies another | — | — | — |
 | **B-08** | External-worker admission gate | **Deferred** — documented (§6 item B-08): three decisions owed, not one | P2 | first external worker | Decide all three before admitting a worker; do not build before |
 | **B-06** | A sweep pass cannot be held indefinitely by one run | **Deferred** | P2 | B-03 (same function) | None until head-of-line blocking is observed |
 | **B-05b** | An enforcing fleet spend ceiling | **Deferred** | P3 | B-05a + a week of data | None |
 | **B-07** | Surface `SweepResult.failed` | **Rejected** | — | — | — (STALLED at 30 min covers it) |
-| A-01 | Per-run cost ceiling | **Done** | — | — | Re-derive the `$5` default after B-04 measures planning cost |
+| A-01 | Per-run cost ceiling | **Done; default retained after one real measurement (2026-09-03)** — a real planned run (planner: 1 call, **$0.24**, 2 steps; step 1 graded + checked, one grader rejection: 2 dispatches + 2 grades + 1 check = **$1.40**; parked at its yellow step at **$1.64** total, 286 s). Plan ≈ 14% of that run; a graded attempt ≈ $0.70, consistent with cycle 2's $0.80 warm. Under `$5` that is a plan plus roughly three graded steps with one retry each, or six clean ones — the same shape the default was chosen for. **One observation is not enough to move it** | — | — | Gate to reassess: five or more real planned runs' totals (the log records `planning_spend_usd` and per-step `spend_usd`); move the default only if their distribution says `$5` parks ordinary work or lets a retry loop run far |
 | A-05 | `extend-budget` | **Done** | — | — | — |
 | A-06 | Replay-safe request ids | **Done** | — | — | — |
 | A-09 | Trimmed dispatch profile | **Done** | — | — | — |
@@ -148,8 +149,7 @@ Compact table, then a detail block for every row that is active or next.
 | A-04 | Run retrospective → memory → planner | **Proposed** | P2 | Recall precision at 50 entries | Not on the critical path; revisit after the stop controls |
 | A-03 | Non-model validation for one action class | **Blocked** (TOOL-04, human authorises a provider) | P1 | TOOL-04 | — |
 | A-02 | SLA clock | **Deferred** | P2 | NOTIFY-01, evidence OBS-08 is insufficient | — |
-| A-07 | Document `decide_step` vs `decide_approval` | **Proposed** (docs only) | P2 | — | Fold into B-09's decision record |
-| A-08 | Retire or adopt `scripts/org_state.py` | **Proposed** (decision) | P2 | — | Owner decides; recommend retire |
+| A-08 | Retire or adopt `scripts/org_state.py` | **Done 2026-09-03 — retired.** Evidence: `state/` held zero rows in ~7 weeks; the runtime already carries all three concepts (run = goal, step = task with `owner`, audit log / approval record / memory = decision) with their own audited transitions; the script kept a second status vocabulary that could only drift (the exact class fixed under `TERMINAL_RUN`). It was exercised only by its own 7-check module test and one skill. Alternatives weighed: *adopt* (runtime writes goals/tasks into `state/`) duplicates the run log; *keep* preserves a documented path nobody uses. Deleted with its module test, `state/README.md` and the core-suite presence check; the `organization-management` skill now routes goals, tasks and decisions to runs, steps and the Control Center, so the routing-map row and the Chief of Staff's charter still resolve | — | — | — |
 
 ### Detail — active and next rows
 
@@ -453,12 +453,13 @@ now registered once, and `upsert_actor(require_active=False)` lets that one serv
 exist for a suspended organization — tokens for it are still refused, because `actor()`
 joins on an active organization regardless. `SuspendedMeansSuspendedTest` holds it.
 
-**B-09 — remaining step.** Step decisions on the local console are off by default
-(`MYORG_LOCAL_STEP_DECISIONS=1` re-enables them; deprecated, removed in 0.6.0). To retire
-the console: add `POST /v1/memory/{id}/decision` (decision-owner, human, reason), move the
-"Things to remember" section to the Control Center, then delete `approval_server.py`.
-Operational tradeoff while the switch exists: a decision made through it carries only a
-typed name — no role, no org scope, no identity. Anyone turning it on accepts that.
+**B-09 — closed.** The retirement sequence was: memory-decision route and Control Center
+section first (additive), then delete the console, its tests and the switch, in the same
+change that moved the version to 0.6.0 — the boundary both deprecations named. The
+deprecation window was therefore one working day. Evidence that this was safe: no consumer
+of either existed (`lease_expires_at` had only the alias test; the console's only unique
+capability was memory decisions, which the API now carries); the CLI remains the shell-access
+fallback. What a person can decide now, and where, is `operating-principles.md` §9.
 
 **Cancelled-run accounting — watch.** A cancelled run's `spend_usd` excludes the dispatch it
 interrupted (and its grade). Documented in `cancel_run`, `charge()` and the runbook.
@@ -474,10 +475,15 @@ warm one). No numeric threshold until there is operating data.
 ceiling is not a ceiling. Symptom to watch: `myorg_runtime_snapshot_duration_seconds` and
 sweep latency rising together. No cache, no index.
 
-**Compatibility, with removal points.**
-- `/v1/claim` and `/v1/heartbeat` return `lease_expires_at` as a deprecated alias of
-  `claim_expires_at`; **removed in 0.6.0** (`pyproject.toml` is 0.5.0; the repo has no tags,
-  so the version field is the boundary).
+**Compatibility, with removal points.** `pyproject.toml` is **0.6.0** as of 2026-09-03; the
+0.6.0 removals below have happened.
+- `/v1/claim` and `/v1/heartbeat` no longer return `lease_expires_at` (removed 0.6.0; a test
+  asserts its absence).
+- `runtime/approval_server.py` and `MYORG_LOCAL_STEP_DECISIONS` removed (0.6.0). Memory
+  decisions moved to `POST /v1/memory/{id}/decision`; the memory record gains an optional
+  `note` (the reason) — older records read back with `note=""`, no migration.
+- `scripts/org_state.py`, `state/`, `MYORG_STATE_DIR` removed (A-08). No data existed to
+  migrate.
 - `/v1/submit`, `/v1/fail`, `/v1/heartbeat` require `claim_token`. Verified: the only
   in-repository callers are `tests/test_agent_api.py`, `tests/test_grading.py`,
   `tests/test_ownership.py` — all migrated; no script, example, skill or fixture calls them.
@@ -485,7 +491,6 @@ sweep latency rising together. No cache, no index.
   only — never in the env example, a unit file, the runbook, README or any deploy artifact —
   so no operator could have set it. `MYORG_CLAIM_SECONDS` is the knob and is now in the
   runbook.
-- `MYORG_LOCAL_STEP_DECISIONS` is new, deprecated on arrival, **removed in 0.6.0**.
 - `cancelled` and `rejected_by_checker` now fire `record_terminal` (one more audit line each);
   `mutate` refuses any run status outside `{"active"} ∪ TERMINAL_RUN`. Stored logs need no
   migration: no existing status changed meaning.
@@ -495,6 +500,13 @@ service, agent, framework, or parallel subsystem, treat that as a design alarm. 
 reassess whether the requirement can be met with the existing `mutate` path, the state
 model, configuration, or a deletion or generalisation. Proceed with new machinery only if
 repository evidence shows the existing architecture cannot meet the requirement safely.
+
+**Test harness — fixed.** `tests/module-skills.sh` ran its unittest module without
+propagating the exit code, so `run.sh` printed `SUITE: PASS` over a red test (seen once,
+2026-09-03, when the rewritten `organization-management` skill failed the registry check).
+It now exits non-zero on either of its checks. The other module scripts were re-read: they
+either end with a single `python3 -m unittest` (its exit code is the script's) or count
+`fail` explicitly.
 
 ### Resolved on 2026-09-03 (kept for traceability; detail in §4 and §5)
 

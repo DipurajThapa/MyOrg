@@ -55,7 +55,7 @@ def escalate_run(run) -> list:
             notice = raise_notice(
                 NEEDS_APPROVAL, f"{run.run_id} is waiting on your decision",
                 f"Step {step_id} needs a person. {run.done} of {run.total} done.",
-                "Open the approvals console and approve or reject it.",
+                "Open the Control Center and approve or reject it.",
                 org_id=org, run_id=run.run_id, step_id=step_id)
             if notice:
                 raised.append(notice)
@@ -81,7 +81,7 @@ def escalate_memory() -> list:
     notice = raise_notice(
         LESSON_PROPOSED, f"{len(waiting)} lesson(s) waiting to be remembered",
         "; ".join(entry.subject for entry in waiting[:3]),
-        "Open the approvals console and keep or discard them.")
+        "Open the Control Center's queue and keep or discard them.")
     return [notice] if notice else []
 
 

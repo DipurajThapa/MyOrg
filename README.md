@@ -104,7 +104,6 @@ lives in [examples/revenue-ops/](examples/revenue-ops/runs/sample-inbound-lead/I
   - `lessons.md` (evidence-backed lessons) · `connectors.md` (live data, secrets, degraded mode)
 - **`.claude/agents/*.md`** — 17 dispatchable specialists, each with a charter: scope,
   inputs → outputs, success criteria, and explicit decision rights (decide / consult / escalate).
-- **`state/*.jsonl`** — durable goals, owned tasks, and decisions, managed by `scripts/org_state.py`.
 - **`runtime/`** — deterministic workflow harness plus provider-neutral service foundation:
   organization-scoped API, short-lived signed actors with database-bound roles, SQLite
   migrations/backup/restore, typed exchange, exact maker-checker approvals, connector admission,
@@ -152,7 +151,7 @@ Details: `docs/OPERATIONS-RUNBOOK.md`.
 
 Start a session in this folder and say any of:
 - *"What can this company do?"*
-- *"Create a goal, assign its first task, and show organization status."*
+- *"Start a run for this goal and show me where every run stands."*
 - *"Run the manual gold workflow and stop at every human approval boundary."*
 - *"Run the maker-checker workflow, return one revision, and preserve the exchange trail."*
 - *"Here's a new inbound lead: …"* (paste a form/email)

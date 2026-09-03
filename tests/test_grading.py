@@ -158,13 +158,12 @@ class GradingTest(unittest.TestCase):
         """A green step waiting on a person with no visible reason invites rubber-stamping."""
         self.make_run("grade-console")
         self.drive("grade-console", CountingBackend(grade_failures=99))
-        from runtime import approvals, approval_server
+        from runtime import approvals
         import importlib as il
         waiting = il.reload(approvals).pending("grade-console")
         self.assertEqual(len(waiting), 1)
+        # `reason` is what GET /v1/decisions carries to the Control Center's decision card.
         self.assertIn("could not run", waiting[0].reason)
-        page = il.reload(approval_server).card(waiting[0], 1, 1)
-        self.assertIn("could not run", page)
 
     # --- and a real failed grade must behave exactly as it did before ---------------
 

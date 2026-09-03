@@ -72,7 +72,7 @@ class EscalationTest(unittest.TestCase):
         self.assertEqual(notice.kind, self.notify.NEEDS_APPROVAL)
         self.assertTrue(notice.blocking)
         self.assertEqual((notice.run_id, notice.step_id), ("esc-waiting", "release-output"))
-        self.assertIn("approvals console", notice.action)
+        self.assertIn("Control Center", notice.action)
         self.assertEqual(notice.org_id, "acme")
 
     def test_a_run_that_ran_out_of_retries_raises_a_blocking_notice(self):

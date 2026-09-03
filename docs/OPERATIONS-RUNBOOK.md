@@ -185,11 +185,12 @@ pause is never mistaken for a quiet day.
 **Deciding steps while paused.** You cannot — suspension refuses your token. Cancel or
 approve what needs it first, then suspend.
 
-**The local approvals console** (`python -m runtime.approval_server`, port 8787) shows the
-queue and still decides *memory* proposals, but no longer decides steps: it has no identity,
-role, organization scope or required reason, and the Control Center does. On a machine with
-no Control Center, `MYORG_LOCAL_STEP_DECISIONS=1` turns the old form back on — deprecated,
-removed in 0.6.0, and every decision it records carries only the name typed into it.
+**Where decisions are made.** The Control Center, and nowhere else: steps, connector
+approvals and memory proposals all bind to a registered human, a role, an organization and a
+reason (`company/operating-principles.md` §9). The old loopback approvals console was
+removed in 0.6.0. Without the Control Center, the CLI is the fallback — it needs shell
+access, which is the trust boundary: `company_runtime approve|reject|cancel-run` and
+`python -m runtime.memory approve|reject <id> --by <you>`.
 
 ## Autonomy metrics blind
 
