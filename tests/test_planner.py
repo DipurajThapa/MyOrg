@@ -105,6 +105,54 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(len(departments()), 17)
         self.assertTrue(all(core.agent_exists(name) for name in departments()))
 
+    def test_the_planner_is_told_to_write_criteria_that_can_be_met(self):
+        """Three consecutive real runs died on the same shape of criterion -- 'every claim
+        carries a dated source link' across ten products, failed on one missing price. The
+        planner was never told what a step can actually do, so it asked for the impossible
+        and the grader was right to refuse it every time."""
+        from runtime.planner import PlanRequest, SEARCHERS
+        rules = PlanRequest(agent="chief-of-staff", goal="g", workflow_id="w",
+                            brief="b").rules()
+        self.assertEqual(SEARCHERS, {"chief-knowledge-officer", "head-of-data"},
+                         "the rule text must follow the real grants, not a hardcoded list")
+        for role in SEARCHERS:
+            self.assertIn(role, rules, "the planner must know who can search")
+        self.assertIn("Never write 'every'", rules)
+        self.assertIn("Put a number on", rules)
+        self.assertIn("cannot be satisfied and cannot be graded", rules)
+
+    def test_a_busy_server_is_not_treated_as_a_badly_written_plan(self):
+        """Repair attempts exist to tell the model its JSON was wrong. Feeding a transport
+        error back as feedback spent the whole repair budget inside one outage -- three
+        calls into an already-overloaded server, then a permanent give-up."""
+        from runtime.executor import ExecutorError
+        from runtime.planner import plan
+        calls = []
+
+        def busy(request):
+            calls.append(request.feedback)
+            raise ExecutorError("claude exited 1: result=API Error: 529 Overloaded")
+
+        with self.assertRaises(ExecutorError) as caught:
+            plan("a goal", "wf-busy", busy, attempts=3, log=lambda _m: None)
+        self.assertIn("529", str(caught.exception))
+        self.assertEqual(len(calls), 1, "it must stop after the first busy answer")
+
+    def test_a_malformed_answer_still_gets_its_repair_attempts(self):
+        """The other half: a bad plan is exactly what the repair loop is for."""
+        from runtime.executor import ExecutorError
+        from runtime.planner import plan
+        calls = []
+
+        def rubbish(request):
+            calls.append(request.feedback)
+            return "not json at all"
+
+        with self.assertRaises(ExecutorError):
+            plan("a goal", "wf-rubbish", rubbish, attempts=3, log=lambda _m: None)
+        self.assertEqual(len(calls), 3, "all three repair attempts are used")
+        self.assertTrue(calls[1], "the second attempt is told what was wrong with the first")
+
 
 if __name__ == "__main__":
     unittest.main()

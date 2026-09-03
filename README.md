@@ -89,6 +89,32 @@ and [docs/history/PRODUCTION-READINESS-GAP-CLOSURE-2026-08-06.md](docs/history/P
 A worked end-to-end run (inbound lead → qualified → routed → gated draft, fully audit-logged)
 lives in [examples/revenue-ops/](examples/revenue-ops/runs/sample-inbound-lead/INDEX.md).
 
+## Seeing it: the console
+
+Departments answer in a `claude` session, but the runtime -- runs, gates, spend, output --
+has a face. One page, served by the runtime itself, on your machine only:
+
+```bash
+export MYORG_AUTH_SECRET=$(python -c "import secrets;print(secrets.token_hex(32))")
+export MYORG_CONSOLE_ACTOR=<your operator id>
+python -m runtime.api
+```
+
+Then open **http://127.0.0.1:8080/**. It carries the whole operator loop:
+
+- **Give the company something to do** -- type a goal; the planner turns it into a workflow
+  and the scheduler starts it. Outward steps still stop for your approval.
+- **Waiting on you** -- approve or reject a parked step, with a reason, on the record.
+- **Runs** -- what is running, what it produced (*Show output*), and a Stop button.
+- **Things agents want kept** -- lessons an agent proposes, kept or discarded by you.
+
+Both routes are refused unless `MYORG_CONSOLE_ACTOR` names a human **and** the request comes
+from loopback, so the console is off by default and grants nothing the admin CLI does not.
+Details, including how to pause everything: [docs/OPERATIONS-RUNBOOK.md](docs/OPERATIONS-RUNBOOK.md).
+
+`apps/control-center/` is the hosted Next/Cloudflare version of the same surface; it
+authenticates through OpenAI Sites headers and does not run on your own machine.
+
 ## How it works
 
 - **`CLAUDE.md`** — the lightweight constitution, loaded every session: operating loop, org

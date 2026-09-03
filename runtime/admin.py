@@ -105,9 +105,15 @@ def main(argv: list[str] | None = None) -> int:
         print("The company now exists. To run it:")
         print(f"  export MYORG_DB={database}")
         print("  export MYORG_AUTH_SECRET=<the same secret you just used>")
-        print("  python -m runtime.api                 # the governed API")
+        print(f"  export MYORG_CONSOLE_ACTOR={args.operator}")
+        print("  python -m runtime.api                 # the governed API and the console")
         print("  python -m runtime.projection          # mirror runs into the read model")
         print("  python -m runtime.scheduler --once    # drive whatever can move")
+        print()
+        # Without this line a new operator has a running company and no idea it has a face:
+        # the console was reachable only from a runbook section nobody opens first.
+        print("Then open http://127.0.0.1:8080/ -- that is the console: ask for work,")
+        print("read what came out, and answer anything waiting on you.")
         print()
         print(f"The token above expires in {args.ttl}s and is a bearer credential: keep it out")
         print("of shell history, logs and tickets. Issue another with `issue-token`.")

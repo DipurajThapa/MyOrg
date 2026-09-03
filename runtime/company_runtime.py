@@ -195,7 +195,7 @@ def append_event(run_id: str, state: dict) -> None:
         handle.flush(); os.fsync(handle.fileno())
 
 
-def attribution(state: dict, approver: str) -> str:
+def attribution(state: dict, approver: str, actor_id: str | None = None) -> str:
     """How much this record is actually entitled to claim about who approved.
 
     The CLI takes `--approver` as a string and cannot authenticate it; the HTTP path binds
@@ -204,6 +204,11 @@ def attribution(state: dict, approver: str) -> str:
     something nobody had checked. So the note now states what was verified: the store is
     consulted when one exists, and when it does not the line says the name is unverified
     rather than implying it is not.
+
+    `approver` is what the record shows a reader; `actor_id` is what the store is keyed by
+    (B-10). The API passes both -- it authenticated an id and displays a name -- so the
+    lookup no longer searched the registry for "Dipuraj Thapa" and reported the one
+    authenticated path as unregistered. The CLI passes only a name and is checked as one.
     """
     try:
         from runtime.projection import default_db
@@ -212,7 +217,7 @@ def attribution(state: dict, approver: str) -> str:
             return f"approved by '{approver}' (name self-asserted at the CLI, unverified)"
         from runtime.db import NotFound, Store
         try:
-            actor = Store(path).actor(state.get("org_id", DEFAULT_ORG), approver)
+            actor = Store(path).actor(state.get("org_id", DEFAULT_ORG), actor_id or approver)
         except NotFound:
             return f"approved by '{approver}' (not a registered actor in this organization)"
         if actor["actor_type"] != "human" or actor["status"] != "active":
@@ -327,7 +332,8 @@ def approve(args) -> None:
         step = state["steps"][args.step]
         return {"actor": args.approver, "action": step["action"], "category": step["risk"],
                 "target": f"{args.run_id}/{args.step}", "approval": "granted", "outcome": "ok",
-                "note": f"{attribution(state, args.approver)} against reference {args.approval_ref}"}
+                "note": f"{attribution(state, args.approver, getattr(args, 'actor_id', None))} "
+                        f"against reference {args.approval_ref}"}
     mutate(args.run_id,args.request_id,"step.approved",args.approver,args.step,change,audit); print("in_progress")
 
 
@@ -341,7 +347,7 @@ def reject(args) -> None:
         step = state["steps"][args.step]
         return {"actor": args.approver, "action": step["action"], "category": step["risk"],
                 "target": f"{args.run_id}/{args.step}", "approval": "denied", "outcome": "blocked",
-                "note": f"{attribution(state, args.approver).replace('approved', 'declined', 1)} "
+                "note": f"{attribution(state, args.approver, getattr(args, 'actor_id', None)).replace('approved', 'declined', 1)} "
                         f"against reference {args.approval_ref}"}
     mutate(args.run_id,args.request_id,"step.rejected",args.approver,args.step,change,audit); print("rejected")
 
@@ -534,7 +540,8 @@ def cancel_run(args) -> None:
         done = sum(s["status"] == "completed" for s in state["steps"].values())
         return {"actor": args.approver, "action": "run.cancelled", "category": "yellow",
                 "target": args.run_id, "approval": "granted", "outcome": "blocked",
-                "note": f"stopped by {args.approver} after {done}/{len(state['steps'])} steps: {reason}"}
+                "note": f"{attribution(state, args.approver, getattr(args, 'actor_id', None)).replace('approved by', 'stopped by', 1)} "
+                        f"after {done}/{len(state['steps'])} steps: {reason}"}
     mutate(args.run_id, args.request_id, "run.cancelled", args.approver, args.run_id, change, audit)
     print("cancelled")
 
@@ -568,6 +575,36 @@ def fail(args) -> None:
         step["status"]="ready" if step["attempts"] < step["max_attempts"] else "blocked_retry_limit"
         if step["status"] == "blocked_retry_limit": state["run_status"]="blocked_retry_limit"
     state=mutate(args.run_id,args.request_id,"step.failed",args.actor,args.step,change); print(state["steps"][args.step]["status"])
+
+
+def release_step(args) -> None:
+    """Put back a step whose attempt never happened, and give back the attempt.
+
+    `request_step` spends an attempt *before* the model is called, which is right when the
+    call is made and wrong when it never is: an overloaded API returned zero tokens twice and
+    a step burned its whole budget without a single word being generated. This returns the
+    step to `ready` and un-spends the attempt, because there was nothing to attempt.
+
+    Distinct from `fail`, which records an attempt that was made and did not work, and from
+    `expire_claim`, which is an operator forcing a claim open. This is the driver saying "the
+    other end was busy" -- so it never blocks a run, and a step it releases keeps its full
+    retry budget for a real try later.
+    """
+    def change(state):
+        step = state["steps"].get(args.step)
+        if not step or step["status"] != "in_progress": raise SystemExit(f"step is not in progress: {args.step}")
+        if args.actor != step["owner"]: raise SystemExit(f"step owner is {step['owner']}, not {args.actor}")
+        check_claim(step, getattr(args, "claim_token", None))
+        step["last_failure"] = args.reason
+        release_claim(step)
+        charge(state, step, args)
+        # Never below zero, and never above what was spent: releasing twice cannot mint
+        # attempts a step was never granted.
+        step["attempts"] = max(0, step["attempts"] - 1)
+        step["releases"] = step.get("releases", 0) + 1
+        step["status"] = "ready"
+    state = mutate(args.run_id, args.request_id, "step.released", args.actor, args.step, change)
+    print(state["steps"][args.step]["status"])
 
 
 def send_message(args) -> None:
@@ -678,6 +715,7 @@ def parser():
     for name,func in (("check-approve",check_approve),("check-return",check_return),("check-reject",check_reject)):
         command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor",required=True); command.add_argument("--message-id",required=True); command.add_argument("--request-id",required=True); command.add_argument("--spend",type=float,default=0.0)
         command.set_defaults(func=func)
+    command=commands.add_parser("release-step"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor",required=True); command.add_argument("--reason",required=True); command.add_argument("--spend",type=float,default=0.0); command.add_argument("--claim-token"); command.add_argument("--request-id",required=True); command.set_defaults(func=release_step)
     command=commands.add_parser("expire-claim"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor"); command.add_argument("--request-id",required=True); command.set_defaults(func=expire_claim)
     command=commands.add_parser("renew-claim"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--holder",required=True); command.add_argument("--claim-token",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=renew_claim)
     command=commands.add_parser("extend-budget"); command.add_argument("run_id"); command.add_argument("--cycles",type=int,required=True); command.add_argument("--approver",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=extend_budget)

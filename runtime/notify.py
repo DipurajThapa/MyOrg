@@ -33,9 +33,18 @@ NEEDS_APPROVAL = "needs_approval"
 RUN_FAILED = "run_failed"
 RUN_STALLED = "run_stalled"
 LESSON_PROPOSED = "lesson_proposed"
+# Work that was asked for and never became a run. Blocking, like a failed run: the person
+# who asked is waiting on an answer that is never coming, and the planner spent real money
+# on each attempt before giving up.
+IDEA_FAILED = "idea_failed"
+# Work that keeps failing for a reason that is supposed to fix itself. A transient failure
+# spends no attempt, which is right for a busy minute and wrong for a long outage: without
+# this the request would retry every sweep forever and nobody would ever be told.
+IDEA_STUCK = "idea_stuck"
 SMOKE_TEST = "smoke_test"
-SEVERITY = {NEEDS_APPROVAL: "blocking", RUN_FAILED: "blocking",
-            RUN_STALLED: "attention", LESSON_PROPOSED: "routine", SMOKE_TEST: "routine"}
+SEVERITY = {NEEDS_APPROVAL: "blocking", RUN_FAILED: "blocking", IDEA_FAILED: "blocking",
+            RUN_STALLED: "attention", IDEA_STUCK: "attention",
+            LESSON_PROPOSED: "routine", SMOKE_TEST: "routine"}
 STDERR_TAIL_CHARS = 400
 
 

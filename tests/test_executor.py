@@ -110,6 +110,68 @@ class ExecutorTest(unittest.TestCase):
         self.assertEqual(step["attempts"], step["max_attempts"])
         self.assertEqual(state["run_status"], "blocked_retry_limit")
 
+    def test_a_busy_server_does_not_spend_a_steps_retry_budget(self):
+        """`request_step` spends an attempt *before* the model is called -- right when the
+        call happens, wrong when it never does. A real 529 returned zero tokens twice and a
+        step burned its whole budget and blocked the run without a word being generated."""
+        class Busy:
+            def __call__(self, request):
+                raise self_executor.ExecutorError(
+                    "claude exited 1: result=API Error: 529 Overloaded")
+
+        self_executor = self.executor
+        self.create_run("auto-busy")
+        # The step goes back to `ready` every time, so the run never settles -- the driver
+        # gives up on the pass rather than on the work. `sweep` records that and moves on.
+        with self.assertRaises(self.executor.ExecutorError):
+            self.executor.advance("auto-busy", Busy(), max_iterations=4, log=self.logs.append)
+
+        state = self.executor.current_state("auto-busy")
+        step = state["steps"]["frame-goal"]
+        self.assertEqual(step["status"], "ready", "it must be waiting to try again")
+        self.assertEqual(step["attempts"], 0, "an attempt nobody made is not spent")
+        self.assertEqual(state["run_status"], "active", "a busy server never blocks a run")
+        self.assertFalse(self.core.claim_is_live(step), "the claim is handed back")
+        # Every dispatch that failed must have released. Counting them is the only thing
+        # that catches a release being swallowed as a replay -- which it was: the request id
+        # was built from the attempt number, and release puts that number back, so the
+        # second release rebuilt the first one's name and did nothing at all.
+        self.assertEqual(step["releases"], 4,
+                         "each busy dispatch releases; a swallowed release is a live loop")
+
+    def test_a_release_gives_every_later_mutation_a_new_name(self):
+        """The regression, isolated. A release puts the attempt number back, so an id keyed
+        on attempts alone rebuilds the *previous* claim's name -- and `mutate` swallows it
+        as a replay, leaving the step `ready` and re-dispatched forever. Every verb keyed on
+        that counter is affected, not just release, so the fix belongs in the shared id."""
+        self.create_run("auto-ids")
+        claim_before = self.executor.request_id("auto-ids", "frame-goal", "claim")
+        self.executor.claim("auto-ids", "frame-goal", "chief-of-staff")
+        release_name = self.executor.request_id("auto-ids", "frame-goal", "release")
+        self.executor.release_step("auto-ids", "frame-goal", "chief-of-staff", "busy")
+
+        claim_after = self.executor.request_id("auto-ids", "frame-goal", "claim")
+        self.assertNotEqual(claim_before, claim_after,
+                            "the claim after a release must not reuse the one before it")
+        self.executor.claim("auto-ids", "frame-goal", "chief-of-staff")
+        self.assertEqual(self.executor.current_state("auto-ids")["steps"]["frame-goal"]["status"],
+                         "in_progress", "the second claim must actually take the step")
+        self.assertNotEqual(release_name,
+                            self.executor.request_id("auto-ids", "frame-goal", "release"))
+
+    def test_a_real_failure_still_spends_the_budget_and_blocks(self):
+        """The other half: a genuine failure is what the retry budget is for."""
+        class Broken:
+            def __call__(self, request):
+                raise self_executor.ExecutorError("the agent produced nothing usable")
+
+        self_executor = self.executor
+        self.create_run("auto-broken")
+        state = self.executor.advance("auto-broken", Broken(), log=self.logs.append)
+        step = state["steps"]["frame-goal"]
+        self.assertEqual(step["attempts"], step["max_attempts"])
+        self.assertEqual(state["run_status"], "blocked_retry_limit")
+
     def test_the_driver_never_loops_forever(self):
         # The 4-step chain needs several passes; one pass must not silently return
         # a half-finished run, it must raise.
@@ -487,6 +549,92 @@ class ExecutorTest(unittest.TestCase):
         worker = agent_api.request_id("frame-goal")
         self.assertNotEqual(driver, worker)
         self.assertNotEqual(worker, agent_api.request_id("frame-goal"))
+
+
+class ClaudeBackendFailureIsDiagnosable(unittest.TestCase):
+    """A failed dispatch must say why.
+
+    `--output-format json` sends the CLI's own errors -- a refusal, a usage limit, a bad
+    flag -- to *stdout*, leaving stderr empty. Reporting stderr alone produced the message
+    `claude exited 1:` with nothing after the colon, and that is exactly what an operator
+    saw when a real planned run failed: told it broke, never told what broke.
+    """
+
+    def backend_error(self, returncode=1, stdout="", stderr=""):
+        from unittest.mock import patch
+        from runtime import backends
+        completed = type("Completed", (), {"returncode": returncode, "stdout": stdout,
+                                           "stderr": stderr})()
+        request = type("Request", (), {"prompt": lambda self: "do a thing",
+                                       "brief": "a brief"})()
+        with patch.object(backends.subprocess, "run", return_value=completed):
+            with self.assertRaises(backends.ExecutorError) as caught:
+                backends.ClaudeCliBackend()(request)
+        return str(caught.exception)
+
+    def test_an_error_on_stdout_reaches_the_operator(self):
+        message = self.backend_error(stdout='{"error":"usage limit reached"}')
+        self.assertIn("usage limit reached", message)
+        self.assertIn("exited 1", message)
+
+    def test_the_diagnosis_is_picked_out_of_the_json_envelope_not_sliced_off_it(self):
+        """The envelope leads with timings and token counts and ends with `result` and
+        `subtype`. Truncating the front keeps the noise and drops the answer -- which is
+        what a real failure did: 400 characters of zeroes and no reason."""
+        import json as json_module
+        envelope = json_module.dumps({
+            "duration_api_ms": 0, "session_id": "x" * 200, "total_cost_usd": 0,
+            "usage": {"input_tokens": 0, "output_tokens": 0,
+                      "cache_creation": {"ephemeral_1h_input_tokens": 0}},
+            "stop_reason": "stop_sequence", "is_error": True,
+            "subtype": "error_during_execution", "result": "Prompt is too long",
+        })
+        self.assertGreater(len(envelope), 400, "the diagnosis sits past a 400-char slice")
+        message = self.backend_error(stdout=envelope)
+        self.assertIn("Prompt is too long", message)
+        self.assertIn("error_during_execution", message)
+        self.assertNotIn("session_id", message, "noise must not crowd out the reason")
+
+    def test_shutdown_noise_never_headlines_a_failure(self):
+        """A session ending abruptly cancels whatever hooks the operator's plugins
+        registered, and those cancellations land on stderr. Reported first, as they were,
+        they buried the real cause: an operator was told a plugin's SessionEnd hook had
+        failed when the answer, further down the same message, was "529 Overloaded"."""
+        import json as json_module
+        hook_noise = ("SessionEnd hook [node .../worker-service.cjs hook claude-code "
+                      "session-complete] failed: Hook cancelled")
+        message = self.backend_error(
+            stdout=json_module.dumps({"result": "API Error: 529 Overloaded", "type": "result"}),
+            stderr=hook_noise)
+        self.assertLess(message.index("529"), message.index("Hook cancelled"),
+                        "the real cause must come first")
+        self.assertIn("while shutting down", message, "the noise is labelled, not deleted")
+
+    def test_a_genuine_stderr_message_still_leads(self):
+        message = self.backend_error(stderr="unknown flag --nope")
+        self.assertTrue(message.split(": ", 1)[1].startswith("stderr="), message)
+
+    def test_zero_tokens_says_the_model_was_never_reached(self):
+        """The most useful thing about a zero-token failure is that it is not the model's:
+        it points the reader at flags, prompt size and session state instead."""
+        import json as json_module
+        message = self.backend_error(stdout=json_module.dumps(
+            {"usage": {"input_tokens": 0, "output_tokens": 0}, "stop_reason": "stop_sequence"}))
+        self.assertIn("stopped before calling the model", message)
+
+    def test_an_error_on_stderr_still_reaches_the_operator(self):
+        self.assertIn("unknown flag", self.backend_error(stderr="unknown flag --nope"))
+
+    def test_both_streams_are_reported_when_both_speak(self):
+        message = self.backend_error(stdout="on stdout", stderr="on stderr")
+        self.assertIn("on stdout", message)
+        self.assertIn("on stderr", message)
+
+    def test_silence_on_both_streams_says_so_rather_than_trailing_a_colon(self):
+        message = self.backend_error()
+        self.assertIn("no output on either stream", message)
+        self.assertFalse(message.rstrip().endswith(":"),
+                         "a message ending in a colon tells the reader nothing")
 
 
 if __name__ == "__main__":

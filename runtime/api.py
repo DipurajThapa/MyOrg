@@ -31,6 +31,7 @@ MAX_JSON_BYTES = 262_144
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 RESOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 LOG = logging.getLogger("myorg.api")
+CONSOLE_PAGE = Path(__file__).with_name("console.html")
 
 
 class RateLimiter:
@@ -77,9 +78,10 @@ class MyOrgHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:
         return
 
-    def _security_headers(self) -> None:
+    def _security_headers(self, content_security_policy: str | None = None) -> None:
         self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+        self.send_header("Content-Security-Policy", content_security_policy
+                         or "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
@@ -102,10 +104,11 @@ class MyOrgHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _send_text(self, status: int, data: bytes, content_type: str) -> None:
+    def _send_text(self, status: int, data: bytes, content_type: str,
+                   content_security_policy: str | None = None) -> None:
         self.send_response(status)
         self._response_status = int(status)
-        self._security_headers()
+        self._security_headers(content_security_policy)
         self.send_header("X-Trace-Id", getattr(self, "trace_id", "unavailable"))
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
@@ -159,6 +162,35 @@ class MyOrgHandler(BaseHTTPRequestHandler):
         if not isinstance(value, dict):
             raise BadRequest("JSON body must be an object")
         return value
+
+    def _console_actor(self) -> str:
+        """The console is off unless a human is named for it, and it never answers anything
+        but the loopback interface -- a remote request must still present a token."""
+        actor_id = os.environ.get("MYORG_CONSOLE_ACTOR", "").strip()
+        if not actor_id or self.client_address[0] not in {"127.0.0.1", "::1"}:
+            raise RouteNotFound()
+        return actor_id
+
+    def _send_console(self) -> None:
+        actor_id = self._console_actor()
+        self._actor_context = f"console:{actor_id}"
+        nonce = secrets.token_urlsafe(16)
+        page = CONSOLE_PAGE.read_text(encoding="utf-8").replace("__NONCE__", nonce)
+        self._send_text(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8",
+                        f"default-src 'none'; script-src 'nonce-{nonce}'; "
+                        f"style-src 'nonce-{nonce}'; connect-src 'self'; "
+                        "frame-ancestors 'none'; base-uri 'none'")
+
+    def _send_console_token(self) -> None:
+        actor_id = self._console_actor()
+        org_id = os.environ.get("MYORG_CONSOLE_ORG", "default").strip()
+        self._actor_context = f"{org_id}:{actor_id}"
+        ttl = 600
+        # `issue` is the same call the admin CLI makes, and it enforces the same things:
+        # the actor must exist, be active, and belong to an organization that is not
+        # suspended. The console gets no authority the CLI does not already grant.
+        token = self.server.tokens.issue(org_id, actor_id, ttl_seconds=ttl)
+        self._send(HTTPStatus.OK, {"token": token, "expires_in": ttl})
 
     def _webhook(self, org_id: str, connector_id: str) -> None:
         """Signed inbound event. Everything about this route is deliberately narrow: it does
@@ -248,6 +280,16 @@ class MyOrgHandler(BaseHTTPRequestHandler):
                 verification = self.server.store.verify()
                 self._send(HTTPStatus.OK, {"status": "ready", "database": verification})
                 return
+            # The operator console: one page, and the short-lived token it runs on. Both
+            # are refused unless MYORG_CONSOLE_ACTOR names a human and the caller is on the
+            # loopback interface -- the same trust boundary as the admin CLI, which anyone
+            # who can already read the database and the signing secret has anyway.
+            if method == "GET" and path in {"/", "/console"}:
+                self._send_console()
+                return
+            if method == "GET" and path == "/v1/console/token":
+                self._send_console_token()
+                return
             if method == "GET" and path == "/metrics":
                 supplied = self.headers.get("Authorization", "")
                 expected = f"Bearer {self.server.metrics_token}" if self.server.metrics_token else ""
@@ -284,6 +326,8 @@ class MyOrgHandler(BaseHTTPRequestHandler):
                     raise BadRequest("invalid run id")
                 if len(parts) == 3:
                     result = self.server.store.run(principal.org_id, run_id)
+                elif parts[3] == "output":
+                    result = self.server.service.run_output(principal, run_id)
                 elif parts[3] == "events":
                     result = self.server.store.run_events(principal.org_id, run_id)
                     for item in result:
@@ -291,6 +335,13 @@ class MyOrgHandler(BaseHTTPRequestHandler):
                 else:
                     raise RouteNotFound()
                 self._send(HTTPStatus.OK, result)
+                return
+            if method == "POST" and path == "/v1/ideas":
+                result = self.server.service.submit_idea(principal, self._json(), self._request_id())
+                self._send(HTTPStatus.ACCEPTED if result["created"] else HTTPStatus.OK, result)
+                return
+            if method == "GET" and path == "/v1/ideas":
+                self._send(HTTPStatus.OK, self.server.service.ideas(principal))
                 return
             if method == "GET" and path == "/v1/decisions":
                 self._send(HTTPStatus.OK, self.server.service.pending_decisions(principal))

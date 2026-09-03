@@ -74,6 +74,30 @@ class MyOrgService:
         return self.store.create_run(principal.org_id, body["id"], body["workflow_id"], body["workflow_revision"],
                                      body["goal"].strip(), body["data_class"], principal.actor_id, request_id)
 
+    def _run_state(self, principal: Principal, run_id: str) -> dict:
+        """Load one file-log run and prove it belongs to this organization.
+
+        A run's log carries `org_id` only if it was created with one; runs made before the
+        field existed, or by `create-run` without `--org`, have none. `projection.project_run`
+        already reads a missing value as the default organization, so the read model lists
+        those runs -- and every caller here used to compare the raw `None`, which made a run
+        the Control Center displays, and offers a Stop button for, answer "unknown run" the
+        moment anybody acted on it. One reading of that field, used by every verb.
+
+        An unknown run and another organization's run give the same answer on purpose: the
+        error must never confirm that a run exists somewhere else.
+        """
+        from runtime import company_runtime as core
+        if not ID_RE.fullmatch(str(run_id)):
+            raise ServiceError("invalid run id")
+        try:
+            state = core.read_events(run_id)[-1]
+        except SystemExit as error:
+            raise ServiceError(f"unknown run: {run_id}") from error
+        if (state.get("org_id") or core.DEFAULT_ORG) != principal.org_id:
+            raise ServiceError(f"unknown run: {run_id}")
+        return state
+
     # --- workflow-step decisions ------------------------------------------------
     # These are the yellow and red gates of a run, which live in the append-only run log.
     # They are a different thing from `request_approval` below, which governs a single
@@ -115,13 +139,7 @@ class MyOrgService:
             raise ServiceError("invalid run or step id")
 
         from runtime import company_runtime as core
-        try:
-            state = core.read_events(run_id)[-1]
-        except SystemExit as error:
-            raise ServiceError(f"unknown run: {run_id}") from error
-        if state.get("org_id") != principal.org_id:
-            # Same answer as a run that does not exist: never confirm another org's runs.
-            raise ServiceError(f"unknown run: {run_id}")
+        state = self._run_state(principal, run_id)
         step = state["steps"].get(step_id)
         if not step:
             raise ServiceError(f"unknown step: {step_id}")
@@ -132,6 +150,7 @@ class MyOrgService:
         who = principal.display_name or principal.actor_id
         command = core.approve if body["decision"] == "approve" else core.reject
         arguments = argparse.Namespace(run_id=run_id, step=step_id, approver=who,
+                                       actor_id=principal.actor_id,
                                        approval_ref=reason, request_id=request_id)
         try:
             _quietly(command, arguments)
@@ -158,19 +177,108 @@ class MyOrgService:
             raise ServiceError("invalid run id")
 
         from runtime import company_runtime as core
-        try:
-            state = core.read_events(run_id)[-1]
-        except SystemExit as error:
-            raise ServiceError(f"unknown run: {run_id}") from error
-        if state.get("org_id") != principal.org_id:
-            raise ServiceError(f"unknown run: {run_id}")
+        self._run_state(principal, run_id)
         who = principal.display_name or principal.actor_id
         try:
             _quietly(core.cancel_run, argparse.Namespace(
-                run_id=run_id, approver=who, reason=reason, request_id=request_id))
+                run_id=run_id, approver=who, actor_id=principal.actor_id,
+                reason=reason, request_id=request_id))
         except SystemExit as error:
             raise ServiceError(str(error)) from error
         return {"run_id": run_id, "status": core.read_events(run_id)[-1]["run_status"]}
+
+    # --- work in, work out -------------------------------------------------------
+    # The two halves an operator actually needs: say what the company should do, and
+    # read what it produced. Both sit on machinery that already existed and was reachable
+    # only from a webhook or the filesystem.
+
+    def submit_idea(self, principal: Principal, body: dict, request_id: str) -> dict:
+        """Queue a goal for the planner, as `operator` rather than a webhook or a schedule.
+
+        This creates no run itself. The scheduler's next intake pass plans the goal into a
+        workflow and starts it, exactly as it does for every other trigger source -- so an
+        idea typed here is governed identically to one that arrived from outside, and the
+        queue-depth refusal that protects the planner protects this too."""
+        # `decision-owner` is here alongside the roles `create_run` takes. Asking for work is
+        # green: it plans and starts internal steps, and every outward step still parks at
+        # this same person's gate. Withholding it would mean the human who must approve the
+        # company's actions cannot ask it to act -- and a webhook, which needs no role at
+        # all, could start work they could not.
+        _require(principal, "decision-owner", "chief-of-staff", "system-admin")
+        if set(body) != {"goal"}:
+            raise ServiceError("an idea takes exactly one field: goal")
+        goal = str(body["goal"]).strip()
+        if not 10 <= len(goal) <= 500:
+            raise ServiceError("goal must be 10..500 characters")
+        if not goal.isprintable():
+            raise ServiceError("goal must be one line of printable text")
+        from runtime import triggers
+        try:
+            row, created = triggers.enqueue(
+                self.store, principal.org_id,
+                triggers.intake_id("operator", request_id), "operator", request_id, goal)
+        except triggers.TriggerError as error:
+            raise ServiceError(str(error)) from error
+        return {"intake_id": row["id"], "run_id": triggers.run_id_for(row),
+                "status": row["status"], "goal": row["goal"], "created": created}
+
+    def ideas(self, principal: Principal) -> list[dict]:
+        """Everything asked for that is not yet visible as a run.
+
+        A trigger is marked `started` the instant intake plans it, but the read model
+        `runs()` reads is only mirrored at the end of a sweep -- which is as long as the
+        slowest run in that pass. Listing queued *and* started-but-unmirrored work is what
+        stops an idea from vanishing for minutes between the two lists.
+        """
+        from runtime import triggers
+        return [{"intake_id": row["id"], "source": row["source"], "goal": row["goal"],
+                 "status": row["status"], "attempts": row["attempts"],
+                 "last_error": row["last_error"],
+                 "run_id": row["run_id"] or triggers.run_id_for(row)}
+                for row in self.store.unfinished_triggers(principal.org_id, 50)]
+
+    MAX_EVIDENCE_BYTES = 64 * 1024
+
+    def run_output(self, principal: Principal, run_id: str) -> dict:
+        """What a run actually produced, step by step -- the evidence files the executor
+        wrote, which until now existed only on disk."""
+        state = self._run_state(principal, run_id)
+        steps = []
+        for step_id, step in sorted(state["steps"].items()):
+            steps.append({"step": step_id, "status": step["status"], "owner": step["owner"],
+                          "action": step["action"], "risk": step["risk"],
+                          "attempts": step["attempts"], "review_cycles": step["review_cycles"],
+                          "output": self._evidence_text(step.get("evidence"))})
+        return {"run_id": run_id, "goal": state.get("goal", ""),
+                "status": state["run_status"], "steps": steps}
+
+    @classmethod
+    def _evidence_text(cls, reference: str | None) -> str:
+        """Read one evidence file, or say why not.
+
+        The path comes out of the run log, which agents write, so it is never trusted as a
+        path: it must resolve inside the runs directory. Without that check an evidence
+        reference would be a file-read primitive pointed at anything this process can open.
+
+        `company_runtime.evidence_path` stores the reference relative to the repository root,
+        so that is what it is anchored on; an absolute one is accepted rather than mangled,
+        because the containment test below is what decides either way.
+        """
+        if not reference:
+            return ""
+        from runtime import company_runtime as core
+        try:
+            candidate = Path(reference)
+            resolved = (candidate if candidate.is_absolute() else core.ROOT / candidate).resolve()
+            resolved.relative_to(core.RUNS.resolve())
+        except (OSError, ValueError):
+            return "[evidence reference points outside the runs directory]"
+        try:
+            data = resolved.read_bytes()[:cls.MAX_EVIDENCE_BYTES]
+        except OSError:
+            return "[evidence file is missing]"
+        text = data.decode("utf-8", errors="replace")
+        return text + ("\n[truncated]" if resolved.stat().st_size > cls.MAX_EVIDENCE_BYTES else "")
 
     def memory_proposals(self, principal: Principal) -> list[dict]:
         """Lessons and facts agents want the company to keep, waiting on a person."""

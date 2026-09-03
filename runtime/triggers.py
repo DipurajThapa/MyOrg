@@ -27,6 +27,7 @@ from runtime import company_runtime as core  # noqa: E402
 from runtime.connectors import ConnectorError, WebhookVerifier  # noqa: E402
 from runtime.db import Conflict, Store  # noqa: E402
 from runtime.executor import ExecutorError  # noqa: E402
+from runtime.backends import is_transient  # noqa: E402
 from runtime.planner import plan  # noqa: E402
 
 EVENT_TYPE_RE = re.compile(r"^[a-z][a-z0-9._-]{1,63}$")
@@ -152,8 +153,12 @@ def start_queued(store: Store, org_id: str, backend, limit: int = 5, log=print) 
     started = []
     for intake in store.queued_triggers(org_id, limit):
         if intake["attempts"] >= MAX_TRIGGER_ATTEMPTS:
-            store.settle_trigger(org_id, intake["id"], "failed", None,
-                                 f"gave up after {intake['attempts']} attempts")
+            # Keep the reason. Overwriting it with the count discarded the only useful
+            # line -- an operator was left with "gave up after 3 attempts" and no why.
+            store.settle_trigger(
+                org_id, intake["id"], "failed", None,
+                f"gave up after {intake['attempts']} attempts. Last error: "
+                f"{(intake['last_error'] or 'unrecorded').strip()}")
             continue
         run_id = run_id_for(intake)
         try:
@@ -167,6 +172,13 @@ def start_queued(store: Store, org_id: str, backend, limit: int = 5, log=print) 
                                 "source": intake["source"]})
                 log(f"  trigger {intake['id']}: adopted the run a previous attempt created")
                 continue
+            # Say so *before* the call, not after. Planning happens inside the sweep and
+            # ahead of the drive pass, and one model call can take minutes -- so during it
+            # the log goes quiet, nothing else is driven, and an operator watching cannot
+            # tell a company that is thinking from one that has died. The line costs
+            # nothing and removes the ambiguity.
+            log(f"  trigger {intake['id']}: planning (attempt {intake['attempts'] + 1} "
+                f"of {MAX_TRIGGER_ATTEMPTS}) -- nothing else moves until this returns")
             costs: list[float] = []
             workflow = plan(intake["goal"], run_id, backend, log=lambda _message: None,
                             costs=costs)
@@ -184,8 +196,15 @@ def start_queued(store: Store, org_id: str, backend, limit: int = 5, log=print) 
                     workflow=str(destination), run_id=run_id, org=org_id, spend=sum(costs),
                     actor=f"trigger:{intake['source']}", request_id=f"trigger-{intake['id']}"))
         except (ExecutorError, TriggerError, SystemExit, OSError) as error:
-            log(f"  trigger {intake['id']}: {error}")
-            _mark(store, org_id, intake["id"], "queued", None, str(error))
+            # A busy server is not this idea's fault, so it does not spend one of its three
+            # chances. Without this a single overloaded minute exhausted the budget and the
+            # request was abandoned permanently -- which is exactly what happened to one.
+            transient = is_transient(str(error))
+            log(f"  trigger {intake['id']}: {error}"
+                + (" -- transient, will try again without spending an attempt"
+                   if transient else ""))
+            _mark(store, org_id, intake["id"], "queued", None, str(error),
+                  count_attempt=not transient)
             continue
         _mark(store, org_id, intake["id"], "started", run_id, None)
         started.append({"intake_id": intake["id"], "run_id": run_id, "source": intake["source"]})
@@ -194,10 +213,10 @@ def start_queued(store: Store, org_id: str, backend, limit: int = 5, log=print) 
 
 
 def _mark(store: Store, org_id: str, intake_id_value: str, status: str,
-          run_id: str | None, error: str | None) -> None:
+          run_id: str | None, error: str | None, count_attempt: bool = True) -> None:
     """Settling is best-effort on the failure path: the run already exists or does not, and
     losing the bookkeeping must not also lose the run."""
     try:
-        store.settle_trigger(org_id, intake_id_value, status, run_id, error)
+        store.settle_trigger(org_id, intake_id_value, status, run_id, error, count_attempt)
     except (Conflict, ConnectorError):
         pass

@@ -871,13 +871,60 @@ class Store:
                 "SELECT * FROM trigger_intake WHERE org_id=? AND status='queued' ORDER BY created_at LIMIT ?",
                 (org_id, int(limit)))]
 
+    def unfinished_triggers(self, org_id: str, limit: int = 50) -> list[dict]:
+        """Work that has been asked for and is not visible as a run.
+
+        `queued_triggers` answers the planner's question -- what is left to plan. This answers
+        the operator's: what did I ask for that I cannot see. Three states qualify, and the
+        third is the one that matters most. `queued` and `started` differ from the run list
+        for as long as a sweep takes, because intake marks a trigger `started` at once while
+        the read model is mirrored only at the end of the pass. `failed` never becomes a run
+        at all -- and leaving it out, as this first did, deleted the operator's request from
+        every screen after the planner had spent real money failing at it.
+        """
+        with self.reading() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT t.* FROM trigger_intake t WHERE t.org_id=? "
+                "AND t.status IN ('queued','started','failed') "
+                "AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.org_id=t.org_id AND r.id=t.run_id) "
+                "ORDER BY t.created_at LIMIT ?", (org_id, int(limit)))]
+
+    def failed_triggers(self, limit: int = 100) -> list[dict]:
+        """Every organization's abandoned requests, for the escalation sweep."""
+        with self.reading() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM trigger_intake WHERE status='failed' ORDER BY updated_at DESC "
+                "LIMIT ?", (int(limit),))]
+
+    def stuck_triggers(self, before: str, limit: int = 100) -> list[dict]:
+        """Requests still queued, already failing, and older than `before`.
+
+        A transient failure spends no attempt, so these retry every sweep indefinitely --
+        correct while the other end is briefly busy, and silence nobody wants during a long
+        outage. `before` is an ISO timestamp; anything created earlier and still carrying an
+        error has been failing long enough that a person should hear about it.
+        """
+        with self.reading() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM trigger_intake WHERE status='queued' AND last_error IS NOT NULL "
+                "AND created_at < ? ORDER BY created_at LIMIT ?", (before, int(limit)))]
+
     def settle_trigger(self, org_id: str, intake_id: str, status: str,
-                       run_id: str | None, error: str | None) -> dict:
+                       run_id: str | None, error: str | None,
+                       count_attempt: bool = True) -> dict:
+        """Record what happened to a queued trigger.
+
+        `count_attempt=False` records the error without spending one of the trigger's three
+        chances. It exists for failures that are the other end being busy: a 529 cost a real
+        request its whole budget in one outage, and counting a server's bad minute against a
+        person's idea is how work gets thrown away for a fault that fixes itself.
+        """
         if status not in {"queued", "started", "failed"}:
             raise StoreError("trigger status is not a settlement outcome")
         with self.transaction() as connection:
             updated = connection.execute(
-                "UPDATE trigger_intake SET status=?,run_id=?,last_error=?,attempts=attempts+1,updated_at=? "
+                f"UPDATE trigger_intake SET status=?,run_id=?,last_error=?,"
+                f"attempts=attempts+{1 if count_attempt else 0},updated_at=? "
                 "WHERE org_id=? AND id=? AND status='queued'",
                 (status, run_id, (error or "")[:512] or None, utc_now(), org_id, intake_id))
             if updated.rowcount != 1:

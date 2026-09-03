@@ -72,6 +72,83 @@ class StubBackend:
                   f"{request.agent}. " * 6 + "\n")
 
 
+# Failures that say "the other end is busy", not "your request is wrong". They are the one
+# class where trying the identical thing later is the correct response -- so they must never
+# be spent as repair attempts or counted against a permanent give-up cap.
+TRANSIENT_MARKERS = (
+    "529", "overloaded", "503", "service unavailable", "502", "bad gateway",
+    "504", "gateway timeout", "429", "rate limit", "timed out", "timeout",
+    "connection reset", "connection refused", "temporarily",
+)
+
+
+# Noise the CLI emits while shutting down, which is not why the dispatch failed. A session
+# ending abruptly -- as it does the moment a model call errors -- cancels whatever hooks the
+# operator's plugins registered, and those cancellations land on stderr. Reported first, as
+# they were, they bury the real cause: an operator was told a plugin's SessionEnd hook had
+# failed when the actual answer, further down the same message, was "529 Overloaded".
+TEARDOWN_MARKERS = ("hook cancelled", "hook canceled", "sessionend hook", "session_end hook")
+
+
+def is_teardown_noise(message: str) -> bool:
+    """Whether a line is a side effect of the session ending rather than a cause of it."""
+    lowered = message.lower()
+    return any(marker in lowered for marker in TEARDOWN_MARKERS)
+
+
+def is_transient(message: str) -> bool:
+    """Whether a failure is the other end being busy rather than the request being wrong.
+
+    A real 529 cost an operator their request: `plan()` fed the transport error back to the
+    model as if it were malformed-JSON feedback, burning all three repair attempts inside one
+    outage, and `start_queued` then counted that as a permanent attempt. Nine calls into an
+    overloaded server, then the idea was thrown away -- for a fault that fixes itself.
+    """
+    return any(marker in message.lower() for marker in TRANSIENT_MARKERS)
+
+
+def cli_failure(stdout: str, stderr: str, limit: int = 400) -> str:
+    """Why the `claude` CLI exited non-zero, in words an operator can act on.
+
+    Two things make this harder than reading stderr. First, with `--output-format json` the
+    CLI's own failures go to *stdout* and stderr comes back empty -- reporting stderr alone
+    produced `claude exited 1:` with nothing after the colon, which is how a planner failure
+    became undiagnosable. Second, that JSON envelope leads with timings and token counts and
+    puts `result`, `subtype` and `is_error` at the *end*, so slicing the first few hundred
+    characters keeps the noise and drops the diagnosis. Pick the fields out instead, and only
+    fall back to raw text when there is no envelope to read.
+    """
+    stdout, stderr = stdout.strip(), stderr.strip()
+    parts = []
+    try:
+        envelope = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        envelope = None
+    if isinstance(envelope, dict):
+        for key in ("error", "result", "subtype", "stop_reason", "type"):
+            value = envelope.get(key)
+            if isinstance(value, dict):
+                value = value.get("message") or json.dumps(value)
+            if value not in (None, "", []):
+                parts.append(f"{key}={str(value)[:limit]}")
+        usage = envelope.get("usage") or {}
+        if usage.get("input_tokens") == 0 and usage.get("output_tokens") == 0:
+            # Nothing was sent and nothing came back: the CLI stopped before the model,
+            # so look at the invocation -- flags, prompt size, session state -- not the model.
+            parts.append("no tokens were used, so the CLI stopped before calling the model")
+    elif stdout:
+        parts.append(f"stdout={stdout[:limit]}")
+    if stderr:
+        # Shutdown noise goes last and is labelled as such; anything else on stderr is a
+        # real cause and leads. Putting all of stderr first was what let a cancelled plugin
+        # hook headline a failure whose actual reason was an overloaded API.
+        if is_teardown_noise(stderr) and parts:
+            parts.append(f"(also, while shutting down: {stderr[:limit]})")
+        else:
+            parts.insert(0, f"stderr={stderr[:limit]}")
+    return " | ".join(parts) or "no output on either stream"
+
+
 class ClaudeCliBackend:
     """Dispatches a step to the owning agent through the local `claude` CLI.
 
@@ -109,7 +186,8 @@ class ClaudeCliBackend:
         except subprocess.TimeoutExpired as error:
             raise ExecutorError(f"step timed out after {self.timeout}s") from error
         if result.returncode != 0:
-            raise ExecutorError(f"claude exited {result.returncode}: {result.stderr.strip()[:400]}")
+            raise ExecutorError(f"claude exited {result.returncode}: "
+                                f"{cli_failure(result.stdout, result.stderr)}")
         output, cost = self._unpack(result.stdout)
         if not output:
             raise ExecutorError("agent returned no output")

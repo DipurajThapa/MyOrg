@@ -17,10 +17,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from runtime import company_runtime as core  # noqa: E402
+from runtime import tools as _tools  # noqa: E402
+from runtime.backends import is_transient  # noqa: E402
 from runtime.executor import (BACKENDS, ClaudeCliBackend, ExecutorError,  # noqa: E402
                               agent_brief)
 
 PLANNER = "chief-of-staff"
+# Which departments can actually reach the outside world. The planner has to know, or
+# it writes 'cite your sources' for a department working in an empty folder -- which it
+# did, three runs in a row.
+SEARCHERS = {role for role in _tools.roles() if _tools.reaches_outward(_tools.grant_for(role))}
 MAX_REPAIR_ATTEMPTS = 3
 CYCLES_PER_STEP = 4
 MAX_CYCLES_CEILING = 100
@@ -66,6 +72,23 @@ class PlanRequest:
             "1..3 and max_attempts at least max_review_cycles + 1\n"
             "- `acceptance` is a list of short, checkable statements about the finished "
             "work; give 2-3 for every green step\n"
+            "\n"
+            "Acceptance criteria decide whether the work is accepted, so write ones a "
+            "single agent can actually meet in one step:\n"
+            f"- Only {', '.join(sorted(SEARCHERS))} can search the web. Every other "
+            "department works from what earlier steps handed it and from the files in its "
+            "own folder. Never ask a department for sources, prices, market data or "
+            "current facts it has no way to obtain.\n"
+            "- No step can run a command, open a URL you name, or reach a company system.\n"
+            "- Put a number on anything you want counted, and keep it small enough to do "
+            "well: 'the 3 largest competitors, each with a dated source' beats 'all "
+            "competitors'.\n"
+            "- Never write 'every', 'all', 'each and every', 'no claim without ...' or "
+            "'fully'. An unbounded criterion cannot be satisfied and cannot be graded: a "
+            "real run demanded 'every claim carries a dated source link' across ten "
+            "products and failed three times on one missing price.\n"
+            "- Ask for the work, not for perfection. If you want depth, say how deep on "
+            "how many items, and let the rest be a list.\n"
         )
 
     def repair(self) -> str:
@@ -159,6 +182,13 @@ def plan(goal: str, workflow_id: str, backend,
                 costs.append(float(getattr(answer, "cost_usd", 0.0) or 0.0))
             workflow = extract_json(answer)
         except ExecutorError as error:
+            # Repair attempts exist to tell the model its JSON was wrong. A busy server is
+            # not a wrong answer, and handing "API Error: 529 Overloaded" back as feedback
+            # spends the whole repair budget inside one outage -- which is what threw away a
+            # real request. Stop and let the caller decide when to try again.
+            if is_transient(str(error)):
+                log(f"  attempt {attempt}: {error}")
+                raise
             feedback = str(error)
             log(f"  attempt {attempt}: {error}")
             continue

@@ -25,7 +25,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from runtime import company_runtime as core  # noqa: E402
 from runtime.backends import (BACKENDS, ClaudeCliBackend,  # noqa: E402,F401
-                              ExecutorError, StubBackend, STEP_TIMEOUT_SECONDS)
+                              ExecutorError, StubBackend, STEP_TIMEOUT_SECONDS,
+                              is_transient)
 from runtime.checking import drive_check as _drive_check  # noqa: E402
 from runtime import tools  # noqa: E402
 from runtime.prompts import (AGENTS_DIR, CheckRequest, GRADE_PATTERN,  # noqa: E402,F401
@@ -38,6 +39,12 @@ from runtime.prompts import (AGENTS_DIR, CheckRequest, GRADE_PATTERN,  # noqa: E
 # MYORG_RUNS_DIR points at.
 EVIDENCE_DIR = ROOT / "runtime" / "runs"
 MAX_ITERATIONS = 50
+# How much of a rejection survives into the run. This was 200 characters, which cut the
+# grader off mid-sentence -- and the same text is what the *next attempt* is given as
+# feedback, so a step was being told to fix something the instruction no longer named. A
+# real run failed three times reading "Criterion 3 misses. What criterion 3 misses 1.".
+# Bounded, because the reason rides in every later event of the run log.
+MAX_REASON_CHARS = 2000
 GRADE_ATTEMPTS = 3           # a grader blip must not cost a person's attention
 GRADE_BACKOFF_SECONDS = 2    # multiplied by the attempt number
 HALTED = core.WAITING_STEP
@@ -91,12 +98,17 @@ def request_id(run_id: str, step_id: str, verb: str) -> str:
     territory, not this one.
     """
     try:
-        attempt = current_state(run_id)["steps"][step_id].get("attempts", 0)
+        step = current_state(run_id)["steps"][step_id]
     except (SystemExit, KeyError):
         # A step that cannot be read has no attempt to name. Fall back to something unique
         # rather than something wrong: a collision here would swallow a real mutation.
         return f"exec-{step_id}-{uuid.uuid4().hex[:12]}"
-    return f"exec-{step_id}-a{attempt}-{verb}"
+    # Releases are counted here as well as attempts, because a release puts the attempt
+    # number *back*. Keyed on attempts alone, the claim after a release rebuilt the claim
+    # before it, `mutate` swallowed it as a replay, and the step sat `ready` being
+    # re-dispatched forever -- a live run spun forty passes that way. Both counters only
+    # ever move, so a genuine crash-replay of the same mutation still dedupes.
+    return f"exec-{step_id}-a{step.get('attempts', 0)}-r{step.get('releases', 0)}-{verb}"
 
 
 def claim(run_id: str, step_id: str, owner: str) -> str:
@@ -191,7 +203,8 @@ def acceptance_failure(run_id, step_id, step, state, backend, output,
     request = GradeRequest(
         step_id=step_id, agent=step["owner"], goal=state["goal"],
         brief=agent_brief(step["owner"]), criteria=criteria,
-        deliverable=clip(output, MAX_SUBMISSION_CHARS))
+        deliverable=clip(output, MAX_SUBMISSION_CHARS),
+        author_could_search=tools.reaches_outward(tools.grant_for(step["owner"])))
     last = None
     for attempt in range(1, GRADE_ATTEMPTS + 1):
         try:
@@ -227,9 +240,15 @@ def dispatch(run_id, step_id, step, state, backend) -> tuple:
     owner = step["owner"]
     room = tools.workspace(run_id, step_id)
     grant = tools.grant_for(owner)
+    # A department that can search is told so in the same breath it is handed the tool.
+    # Attaching the warning to the *grant* rather than to a department's own file means a
+    # future grant cannot be made without it -- which is the only reason this is safe.
+    brief = agent_brief(owner)
+    if tools.reaches_outward(grant):
+        brief += tools.NETWORK_WARNING
     output = backend(StepRequest(run_id=run_id, step_id=step_id, agent=owner,
                                  action=step["action"], goal=state["goal"],
-                                 brief=agent_brief(owner),
+                                 brief=brief,
                                  handoffs=upstream_handoffs(state, step),
                                  feedback=last_feedback(state, step),
                                  remembered=remembered_for(step_id, step, state),
@@ -245,6 +264,19 @@ def finish(run_id: str, step_id: str, owner: str, evidence: str, revision: str,
         request_id=request_id(run_id, step_id, "complete")))
 
 
+def release_step(run_id: str, step_id: str, owner: str, reason: str,
+                 spend: float = 0.0, claim_token: str | None = None,
+                 request_id_value: str | None = None) -> None:
+    """Hand a step back unattempted, because the other end was busy (see `core.release_step`)."""
+    try:
+        quietly(core.release_step, namespace(
+            run_id=run_id, step=step_id, actor=owner, reason=reason[:MAX_REASON_CHARS], spend=spend,
+            claim_token=claim_token or token_for(run_id, step_id),
+            request_id=request_id_value or request_id(run_id, step_id, "release")))
+    except SystemExit as error:
+        raise ExecutorError(f"could not release {step_id}: {error}") from error
+
+
 def record_failure(run_id: str, step_id: str, owner: str, reason: str,
                    spend: float = 0.0, claim_token: str | None = None,
                    request_id_value: str | None = None) -> None:
@@ -258,7 +290,7 @@ def record_failure(run_id: str, step_id: str, owner: str, reason: str,
     worker whose claim had been taken over write with the new holder's token."""
     try:
         quietly(core.fail, namespace(run_id=run_id, step=step_id, actor=owner,
-                                     reason=reason[:200], spend=spend,
+                                     reason=reason[:MAX_REASON_CHARS], spend=spend,
                                      claim_token=claim_token or token_for(run_id, step_id),
                                      request_id=request_id_value or request_id(run_id, step_id, "fail")))
     except SystemExit as error:
@@ -272,7 +304,7 @@ def hold_for_human(run_id: str, step_id: str, owner: str, output: str,
     artifact = write_evidence(run_id, step_id, output, "ungraded")
     try:
         quietly(core.hold, namespace(run_id=run_id, step=step_id, actor=owner,
-                                     evidence=artifact, reason=reason[:200], spend=spend,
+                                     evidence=artifact, reason=reason[:MAX_REASON_CHARS], spend=spend,
                                      claim_token=claim_token or token_for(run_id, step_id),
                                      request_id=request_id_value or request_id(run_id, step_id, "hold")))
     except SystemExit as error:
@@ -339,7 +371,7 @@ def over_budget(run_id: str, step_id: str, owner: str, state: dict, log) -> bool
     artifact = write_evidence(run_id, step_id, note, "over-budget")
     try:
         quietly(core.hold, namespace(run_id=run_id, step=step_id, actor=owner,
-                                     evidence=artifact, reason=reason[:200], spend=0.0,
+                                     evidence=artifact, reason=reason[:MAX_REASON_CHARS], spend=0.0,
                                      claim_token=token_for(run_id, step_id),
                                      request_id=request_id(run_id, step_id, "over-budget")))
     except SystemExit as error:
@@ -388,6 +420,13 @@ def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
     try:
         output, produced = dispatch(run_id, step_id, step, state, backend)
     except ExecutorError as error:
+        # A busy server is not a failed attempt. `request_step` already spent one before the
+        # call, so recording a failure here charged a step twice over for work nobody did:
+        # a 529 returning zero tokens burned a step's whole budget and blocked the run.
+        if is_transient(str(error)):
+            log(f"  {step_id}: could not reach the agent -- {error}")
+            release_step(run_id, step_id, owner, str(error), spend=sum(costs))
+            return
         log(f"  {step_id}: agent failed -- {error}")
         record_failure(run_id, step_id, owner, str(error), spend=sum(costs))
         return
