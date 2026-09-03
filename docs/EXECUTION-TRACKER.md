@@ -470,6 +470,19 @@ cancelled runs are a noticeable share of runs, **or** dispatch costs vary enough
 dispatch" is a large fraction of a run's bill (a cold first dispatch was measured at ~3.5× a
 warm one). No numeric threshold until there is operating data.
 
+**The daemon on this host — deployed 2026-09-03, one watch item.** `MyOrgScheduler` is
+registered as a Windows Scheduled Task (`deploy/install-scheduler-windows.ps1`): runs as the
+registering user (Lenovo, interactive — so its `gh` login serves the GitHub sink), trigger
+**at logon** (a boot trigger needs elevation and could not run before logon anyway; the
+installer was corrected), restarted by Windows on failure, `MYORG_NOTIFY_COMMAND` and
+`MYORG_NOTIFY_GITHUB_REPO` persisted as user-level environment. The store holds 0 schedules
+and every run is finished, so the loop idles and spends nothing until a trigger is
+registered. *Watch:* the loop's stdout is not captured under a task (it uses `print`, and
+the installer's old message pointing at a "runtime log" was false — fixed). Its health is
+read from `runtime.health`, `/metrics`, `notify list` and the task's history. If that
+proves insufficient, the smallest change is a `--log-file` on the scheduler, not a logging
+framework.
+
 **`over_budget` — watch.** Re-reads the whole run log per ready step per pass
 (`executor.py`, `current_state(run_id)` inside the per-step check). Deliberate; a stale
 ceiling is not a ceiling. Symptom to watch: `myorg_runtime_snapshot_duration_seconds` and

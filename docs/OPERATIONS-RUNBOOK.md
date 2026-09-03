@@ -114,6 +114,11 @@ retry adds nothing. `gh` must be able to authenticate as whoever runs the schedu
   `/etc/myorg/myorg.env` as `GH_TOKEN` — a fine-grained token scoped to this repository with
   **Issues: read and write** and nothing else. Never in the repository, never in the unit file.
 
+**Before wiring it for the first time**, run `python -m runtime.notify list`: every notice
+raised while nothing was configured is still outstanding and will be sent the moment a
+command exists — including ones about runs that have long since finished. Acknowledge the
+stale ones with `python -m runtime.notify ack <id>` first, or expect them as issues.
+
 **Test it:** `python -m runtime.notify test` sends one synthetic notice through the real
 path and exits 1 (could not write the outbox), 2 (no command set), 3 (the command ran and
 failed — its stderr is printed and kept on the notice), or 0 (the sink accepted it). Then
