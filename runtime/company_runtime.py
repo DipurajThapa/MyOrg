@@ -305,6 +305,14 @@ def request_step(args) -> None:
         if step["risk"] == "red": step["status"] = "blocked_human"; state["run_status"]="blocked_human"
         elif step["risk"] == "yellow": step["status"] = "awaiting_approval"
         else:
+            # The cap belongs here, where every dispatch passes, not only on `fail`. A step
+            # returned by its checker came back through this door and ran at 4 of a maximum
+            # 2: the limit its owner set was enforced on one path out of three, so the
+            # per-step spend brake was not a brake.
+            if step["attempts"] >= step["max_attempts"]:
+                step["status"] = "blocked_retry_limit"
+                state["run_status"] = "blocked_retry_limit"
+                return
             step["status"] = "in_progress"; step["attempts"] += 1
             mint_claim(state, step, getattr(args, "holder", None) or args.actor)
     def audit(state):
@@ -326,7 +334,11 @@ def approve(args) -> None:
         step=state["steps"].get(args.step)
         if not step or step["status"] != "awaiting_approval": raise SystemExit(f"step is not awaiting approval: {args.step}")
         if not args.approval_ref.strip(): raise SystemExit("approval_ref is required")
-        step.update(status="in_progress", attempts=step["attempts"]+1, approver=args.approver, approval_ref=args.approval_ref)
+        # A human decision is not a retry. This used to spend an attempt, so a step that had
+        # already reached its cap came back at 3 of 2 -- waiting for a person cost the step
+        # part of the budget its owner set, and the cap stopped meaning anything on this
+        # path. Approval resumes the work; it does not re-try it.
+        step.update(status="in_progress", approver=args.approver, approval_ref=args.approval_ref)
         release_claim(step)  # the human hands it back; the next driver claims it
     def audit(state):
         step = state["steps"][args.step]

@@ -172,6 +172,62 @@ class ExecutorTest(unittest.TestCase):
         self.assertEqual(step["attempts"], step["max_attempts"])
         self.assertEqual(state["run_status"], "blocked_retry_limit")
 
+    def test_waiting_for_a_person_never_costs_the_step_an_attempt(self):
+        """A human decision is not a retry. `approve` used to spend one, so a step that had
+        already reached its cap resumed at 3 of 2 -- the operator's own budget was charged
+        for the time it took them to answer."""
+        self.create_run("auto-approve")
+        self.executor.quietly(self.core.request_step, self.executor.namespace(
+            run_id="auto-approve", step="frame-goal", actor="chief-of-staff",
+            holder="driver", request_id="claim-appr"))
+        before = self.executor.current_state("auto-approve")["steps"]["frame-goal"]["attempts"]
+        self.executor.quietly(self.core.hold, self.executor.namespace(
+            run_id="auto-approve", step="frame-goal", actor="chief-of-staff",
+            evidence=self.core.RUNS.__class__(__file__).as_posix(), reason="grader unavailable",
+            claim_token=None, spend=0.0, request_id="hold-appr"))
+        self.executor.quietly(self.core.approve, self.executor.namespace(
+            run_id="auto-approve", step="frame-goal", approver="Owner", actor_id="owner",
+            approval_ref="ticket-1", request_id="appr-1"))
+        step = self.executor.current_state("auto-approve")["steps"]["frame-goal"]
+        self.assertEqual(step["status"], "in_progress")
+        self.assertEqual(step["attempts"], before, "approval must not spend an attempt")
+
+    def test_a_step_at_its_cap_is_not_dispatched_again_while_the_run_lives(self):
+        """The live failure: a step reached its cap without ever going through `fail`, so
+        the run stayed active and `request_step` -- the only door the approval and
+        checker-return paths use -- let it run twice more, at 3 and then 4 of a maximum 2."""
+        self.create_run("auto-cap-all")
+        limit = self.executor.current_state("auto-cap-all")["steps"]["frame-goal"]["max_attempts"]
+        for n in range(limit):
+            self.executor.quietly(self.core.request_step, self.executor.namespace(
+                run_id="auto-cap-all", step="frame-goal", actor="chief-of-staff",
+                holder="driver", request_id=f"claim-{n}"))
+            if n < limit - 1:  # leave the last attempt in progress, so the run stays active
+                self.executor.quietly(self.core.fail, self.executor.namespace(
+                    run_id="auto-cap-all", step="frame-goal", actor="chief-of-staff",
+                    reason="no good", claim_token=None, spend=0.0, request_id=f"fail-{n}"))
+
+        # A human decides the ungraded work is fine. That must not spend an attempt, and it
+        # leaves the step at its cap with the run still very much alive.
+        self.executor.quietly(self.core.hold, self.executor.namespace(
+            run_id="auto-cap-all", step="frame-goal", actor="chief-of-staff",
+            evidence=__file__, reason="grader unavailable", claim_token=None,
+            spend=0.0, request_id="hold-cap"))
+        self.executor.quietly(self.core.approve, self.executor.namespace(
+            run_id="auto-cap-all", step="frame-goal", approver="Owner", actor_id="owner",
+            approval_ref="ticket-2", request_id="appr-cap"))
+        state = self.executor.current_state("auto-cap-all")
+        self.assertEqual(state["run_status"], "active")
+        self.assertEqual(state["steps"]["frame-goal"]["attempts"], limit)
+
+        # Now the door refuses, which is what it never did.
+        self.executor.quietly(self.core.fail, self.executor.namespace(
+            run_id="auto-cap-all", step="frame-goal", actor="chief-of-staff",
+            reason="still no good", claim_token=None, spend=0.0, request_id="fail-last"))
+        after = self.executor.current_state("auto-cap-all")["steps"]["frame-goal"]
+        self.assertEqual(after["attempts"], limit, "the cap holds")
+        self.assertEqual(after["status"], "blocked_retry_limit")
+
     def test_the_driver_never_loops_forever(self):
         # The 4-step chain needs several passes; one pass must not silently return
         # a half-finished run, it must raise.
