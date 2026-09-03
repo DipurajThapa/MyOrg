@@ -121,6 +121,29 @@ class PlannerTest(unittest.TestCase):
         self.assertIn("Put a number on", rules)
         self.assertIn("cannot be satisfied and cannot be graded", rules)
 
+    def test_the_planner_budgets_attempts_for_grading_as_well_as_review(self):
+        """`max_review_cycles + 1` passes validation and is still too tight: it reserves one
+        attempt for the work and one per return, leaving nothing for a grader rejection. A
+        real run set 2 against 1, failed the grader once, and was blocked the moment its
+        checker returned the work."""
+        from runtime.planner import PlanRequest
+        rules = PlanRequest(agent="chief-of-staff", goal="g", workflow_id="w",
+                            brief="b").rules()
+        self.assertIn("max_review_cycles + 2", rules)
+        self.assertIn("a rejected attempt is spent", rules)
+        self.assertIn("leaves no room for a single grader rejection", rules)
+
+    def test_the_runtime_floor_stays_where_it_is(self):
+        """The prompt asks for headroom; validation still only demands viability. Raising
+        the floor would invalidate every shipped workflow, which is a migration, not a fix."""
+        workflow = {
+            "version": 1, "id": "wf-floor", "goal": "g", "max_cycles": 8,
+            "steps": [{"id": "s1", "owner": "cto-engineering", "action": "internal_write",
+                       "depends_on": [], "max_attempts": 2, "checker": "cpo-product",
+                       "max_review_cycles": 1}],
+        }
+        core.validate_workflow(workflow)  # accepted: minimum viable, not generous
+
     def test_a_busy_server_is_not_treated_as_a_badly_written_plan(self):
         """Repair attempts exist to tell the model its JSON was wrong. Feeding a transport
         error back as feedback spent the whole repair budget inside one outage -- three

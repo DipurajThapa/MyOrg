@@ -89,6 +89,20 @@ class PlanRequest:
             "products and failed three times on one missing price.\n"
             "- Ask for the work, not for perfection. If you want depth, say how deep on "
             "how many items, and let the rest be a list.\n"
+            "\n"
+            "Budget `max_attempts` for what really happens to a step:\n"
+            "- An attempt is one go at the work. A step is graded against its own "
+            "acceptance criteria first, and a rejected attempt is spent -- research and "
+            "analysis often take two or three goes to satisfy their criteria before a "
+            "checker ever sees them.\n"
+            "- A `checker` then reviews, and every return costs another attempt.\n"
+            "- So a checked step needs its review cycles plus room to be graded: "
+            "`max_attempts = max_review_cycles + 2` is the sensible floor, and 4 or 5 is "
+            "right for research a checker will scrutinise. `max_review_cycles + 1` is the "
+            "bare minimum the runtime accepts and it leaves no room for a single grader "
+            "rejection: a real run set 2 attempts against 1 review cycle, failed the "
+            "grader once, and had nothing left when the checker returned the work.\n"
+            "- Give an unchecked step 2 or 3. One means a single bad answer ends it.\n"
         )
 
     def repair(self) -> str:
