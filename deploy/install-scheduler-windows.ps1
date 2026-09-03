@@ -63,7 +63,9 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
 Write-Output "Registered scheduled task '$TaskName'."
 Write-Output "Start it now with:  Start-ScheduledTask -TaskName $TaskName"
 Write-Output "Stop it with:       Stop-ScheduledTask  -TaskName $TaskName"
-# The loop prints to stdout, and a scheduled task has no console -- that output is gone.
-# What it *does* is visible elsewhere: python -m runtime.health, /metrics, notify list.
-Write-Output "Its console output is not captured. Watch it with: python -m runtime.health,"
-Write-Output "python -m runtime.notify list, /metrics, and Task Scheduler > History."
+# An interactive task opens a console window: one line per pass. That window is the loop's
+# log for as long as it is open; nothing persists it. Closing the window kills the loop
+# (Windows restarts it after a minute) -- stop it properly with Stop-ScheduledTask.
+Write-Output "It runs in a console window while you are logged on: one line per pass. That"
+Write-Output "window is its log. Do not close it to stop it -- use Stop-ScheduledTask. Its state"
+Write-Output "is also readable from: python -m runtime.health, python -m runtime.notify list, /metrics."

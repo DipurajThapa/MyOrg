@@ -477,11 +477,11 @@ registering user (Lenovo, interactive — so its `gh` login serves the GitHub si
 installer was corrected), restarted by Windows on failure, `MYORG_NOTIFY_COMMAND` and
 `MYORG_NOTIFY_GITHUB_REPO` persisted as user-level environment. The store holds 0 schedules
 and every run is finished, so the loop idles and spends nothing until a trigger is
-registered. *Watch:* the loop's stdout is not captured under a task (it uses `print`, and
-the installer's old message pointing at a "runtime log" was false — fixed). Its health is
-read from `runtime.health`, `/metrics`, `notify list` and the task's history. If that
-proves insufficient, the smallest change is a `--log-file` on the scheduler, not a logging
-framework.
+registered. *Watch:* as an interactive task the loop runs in a visible console window — one line per
+pass — and that window is its only log; nothing persists it, and closing the window kills
+the loop (Windows restarts it a minute later). Its state is also readable from
+`runtime.health`, `/metrics` and `notify list`. If a persisted log proves necessary, the
+smallest change is a `--log-file` on the scheduler, not a logging framework.
 
 **`over_budget` — watch.** Re-reads the whole run log per ready step per pass
 (`executor.py`, `current_state(run_id)` inside the per-step check). Deliberate; a stale
