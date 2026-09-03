@@ -110,11 +110,17 @@ class Store:
                 (org_id, name, "active", utc_now()),
             )
 
-    def upsert_actor(self, org_id: str, actor_id: str, actor_type: str, display_name: str, roles: list[str]) -> None:
+    def upsert_actor(self, org_id: str, actor_id: str, actor_type: str, display_name: str, roles: list[str],
+                     require_active: bool = True) -> None:
+        """`require_active=False` is for the runtime's own service actors (the projector):
+        they must exist while an organization is suspended, or the read model goes dark
+        exactly when a person most needs it. Tokens are still refused for them -- `actor()`
+        joins on an active organization regardless of how the row got there."""
         timestamp = utc_now()
         with self.transaction() as connection:
-            if not connection.execute("SELECT 1 FROM organizations WHERE id=? AND status='active'", (org_id,)).fetchone():
-                raise NotFound("active organization not found")
+            status_filter = " AND status='active'" if require_active else ""
+            if not connection.execute(f"SELECT 1 FROM organizations WHERE id=?{status_filter}", (org_id,)).fetchone():
+                raise NotFound("active organization not found" if require_active else "organization not found")
             connection.execute(
                 "INSERT INTO actors(id,org_id,actor_type,display_name,status,created_at) VALUES(?,?,?,?,?,?) "
                 "ON CONFLICT(org_id,id) DO UPDATE SET actor_type=excluded.actor_type,display_name=excluded.display_name,status='active'",

@@ -183,6 +183,7 @@ class ApprovalsTest(unittest.TestCase):
     # --- the page ------------------------------------------------------------------
 
     def test_the_page_shows_the_waiting_work_and_a_way_to_decide(self):
+        self.allow_local_decisions()  # the form exists only on the deprecated path (B-09)
         self.park("gate-page")
         markup = self.server.page(self.approvals.pending())
         self.assertIn("release-output", markup)
@@ -238,8 +239,31 @@ class ApprovalsTest(unittest.TestCase):
         self.assertNotIn("<script>x</script>", markup)
         self.assertNotIn("<script>y</script>", markup)
 
+    def allow_local_decisions(self) -> None:
+        import os
+        os.environ[self.server.LOCAL_STEP_DECISIONS_ENV] = "1"
+        self.addCleanup(os.environ.pop, self.server.LOCAL_STEP_DECISIONS_ENV, None)
+
+    def test_step_decisions_are_off_here_by_default_and_point_to_the_control_center(self):
+        """B-09: this loopback page has no identity, role, org scope or required reason,
+        so it no longer decides steps unless an operator turns the deprecated path on."""
+        import os
+        os.environ.pop(self.server.LOCAL_STEP_DECISIONS_ENV, None)
+        self.park("gate-off")
+        markup = self.server.page(self.approvals.pending())
+        self.assertNotIn('action="/decide"', markup)
+        self.assertIn("Control Center", markup)
+        flash = self.server.apply_decision({
+            "run_id": "gate-off", "step": "release-output", "verdict": "approve",
+            "approver": "dipuraj", "note": "looks right"})
+        self.assertIn("Not recorded", flash)
+        self.assertIn("Control Center", flash)
+        self.assertEqual(len(self.approvals.pending()), 1)
+
     def test_a_posted_decision_is_applied_and_reported(self):
+        self.allow_local_decisions()
         self.park("gate-post")
+        self.assertIn('action="/decide"', self.server.page(self.approvals.pending()))
         flash = self.server.apply_decision({
             "run_id": "gate-post", "step": "release-output", "verdict": "approve",
             "approver": "dipuraj", "note": "looks right"})
@@ -247,6 +271,7 @@ class ApprovalsTest(unittest.TestCase):
         self.assertEqual(self.approvals.pending(), [])
 
     def test_a_bad_posted_decision_is_refused_with_a_readable_message(self):
+        self.allow_local_decisions()
         self.park("gate-badpost")
         flash = self.server.apply_decision({
             "run_id": "gate-badpost", "step": "release-output", "verdict": "approve",

@@ -233,6 +233,37 @@ class EveryTerminalStateIsHandledTest(CancelTestBase):
                 self.assertIn(status, self.escalation.DEAD_END, status)
             self.assertNotEqual(self.projection.coarse(status), "active", status)
 
+    def test_every_terminal_transition_records_its_end_exactly_once(self):
+        """Not only classified: *recorded*. `rejected_by_checker` was terminal in practice
+        and absent from TERMINAL_RUN, so `record_terminal` never fired for it. This walks
+        the canonical set through `mutate` and counts the audit line each one leaves."""
+        for status in sorted(self.core.TERMINAL_RUN):
+            run_id = f"can-end-{status.replace('_', '-')}"
+            self.make_run(run_id, steps=1)
+
+            def end(state, status=status):
+                state["run_status"] = status
+            self.core.mutate(run_id, f"end-{run_id}", f"run.{status}", "test", run_id, end)
+            lines = [e for e in self.audit_entries()
+                     if e["action"] == f"run.{status}" and e["target"] == run_id
+                     and e["actor"] == "runtime"]
+            self.assertEqual(len(lines), 1, status)
+            self.assertEqual(lines[0]["outcome"], "ok" if status == "completed" else "blocked")
+            with self.assertRaises(SystemExit):  # and it really is the end
+                self.core.mutate(run_id, f"after-{run_id}", "step.requested", "test", run_id,
+                                 lambda s: None)
+
+    def test_no_verb_can_invent_a_run_status(self):
+        """One canonical set, enforced at the one place every verb passes through."""
+        self.make_run("can-bogus", steps=1)
+
+        def invent(state):
+            state["run_status"] = "paused_by_someone"
+        with self.assertRaises(SystemExit) as refused:
+            self.core.mutate("can-bogus", "bogus-1", "run.paused", "test", "can-bogus", invent)
+        self.assertIn("not in TERMINAL_RUN", str(refused.exception))
+        self.assertEqual(self.state("can-bogus")["run_status"], "active")
+
     def test_a_cancelled_run_reads_as_stopped_everywhere(self):
         self.make_run("can-seen")
         self.executor.quietly(self.core.request_step, self.ns(

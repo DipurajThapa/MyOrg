@@ -419,9 +419,17 @@ def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
     log(f"  {step_id}: completed by {owner} -> {evidence} (run={run_status})")
 
 
-def advance(run_id: str, backend, max_iterations: int = MAX_ITERATIONS, log=print) -> dict:
-    """Drive the run until it finishes, needs a human, or stops making progress."""
+def advance(run_id: str, backend, max_iterations: int = MAX_ITERATIONS, log=print,
+            halt=None) -> dict:
+    """Drive the run until it finishes, needs a human, or stops making progress.
+
+    `halt` is asked before every iteration; the scheduler passes "is this organization
+    suspended". Work already dispatched in the current iteration finishes and records its
+    own transition -- suspension stops the *next* dispatch, never a claim in flight."""
     for _ in range(max_iterations):
+        if halt is not None and halt():
+            log(f"run {run_id}: not driven -- the organization is suspended")
+            return current_state(run_id)
         state = current_state(run_id)
         if state["run_status"] != "active":
             # REC-11: a terminal run used to be reported with its bare status, so an

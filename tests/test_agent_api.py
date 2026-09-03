@@ -233,22 +233,44 @@ class AgentApiTest(unittest.TestCase):
         self.assertEqual(self.step(run_id)["status"], "in_progress")
         self.assertEqual(self.step(run_id)["claim_token"], token)
 
-    def test_a_worker_whose_claim_was_taken_over_cannot_complete_the_step(self):
-        """Failing before B-01 (the race experiment, case b)."""
-        run_id, token = self.claim_first("api-taken")
-        # Its claim lapsed and another holder took the step -- a newer token now rules.
-        self.executor.quietly(self.core.expire_claim, self.executor.namespace(
-            run_id=run_id, step="frame-goal", actor="operator", request_id="exp-1"))
-        self.executor.quietly(self.core.take, self.executor.namespace(
-            run_id=run_id, step="frame-goal", actor="chief-of-staff",
-            holder="executor-other", request_id="take-1"))
-        status, body = self.call("/v1/submit", {
-            "run_id": run_id, "step": "frame-goal", "agent": "chief-of-staff",
-            "claim_token": token, "output": DELIVERABLE})
-        self.assertEqual(status, 409)
-        self.assertIn("does not hold", body["error"])
-        self.assertEqual(self.step(run_id)["status"], "in_progress")
-        self.assertEqual(self.step(run_id)["holder"], "executor-other")
+    def test_takeover_fences_out_the_old_holder_and_lets_the_new_one_finish(self):
+        """The whole sequence, at the boundary (failing before B-01, case b):
+        worker claims -> claim expires on its own -> the driver adopts -> every write the
+        old worker tries with its old token is refused -> the new holder completes.
+
+        This is *state* fencing: a stale worker cannot change MyOrg. It says nothing about
+        an external side effect the stale worker may already have performed -- that is
+        B-08's admission gate, not the claim model's job."""
+        os.environ["MYORG_CLAIM_SECONDS"] = "1"
+        self.core = importlib.reload(self.core)
+        run_id, old_token = self.claim_first("api-taken")
+        time.sleep(1.2)  # 2. the claim expires; nobody forced it
+        # 3. the driver adopts, exactly as drive_step does, and a newer token now rules.
+        new_token = self.executor.take(run_id, "frame-goal", "chief-of-staff") or \
+            self.step(run_id)["claim_token"]
+        self.assertNotEqual(new_token, old_token)
+        self.assertTrue(self.step(run_id)["holder"].startswith("executor-"))
+        # 4-5. every stale mutation is refused and changes nothing.
+        for path, extra in (("/v1/submit", {"output": DELIVERABLE}),
+                            ("/v1/fail", {"reason": "giving up"}),
+                            ("/v1/heartbeat", {})):
+            status, body = self.call(path, {"run_id": run_id, "step": "frame-goal",
+                                            "agent": "chief-of-staff",
+                                            "claim_token": old_token, **extra})
+            self.assertEqual(status, 409, path)
+            self.assertIn("does not hold", body["error"])
+            step = self.step(run_id)
+            self.assertEqual(step["status"], "in_progress", path)
+            self.assertEqual(step["claim_token"], new_token, path)
+            self.assertEqual(step["attempts"], 1, path)
+        # 6. the new holder completes normally with its own token.
+        evidence = self.executor.write_evidence(run_id, "frame-goal", DELIVERABLE)
+        run_status = self.executor.quietly(self.core.complete, self.executor.namespace(
+            run_id=run_id, step="frame-goal", actor="chief-of-staff", evidence=evidence,
+            revision=self.executor.current_state(run_id)["workflow_revision"],
+            claim_token=new_token, spend=0.0, request_id="new-owner-complete"))
+        self.assertEqual(run_status, "active")
+        self.assertEqual(self.step(run_id)["status"], "completed")
 
     # --- heartbeats and dead workers ------------------------------------------------
 

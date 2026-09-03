@@ -130,13 +130,13 @@ Compact table, then a detail block for every row that is active or next.
 | ID | Outcome | Status | Pri | Depends on | Next action |
 |---|---|---|---|---|---|
 | **NOTIFY-01** | A person is actually told when the company needs one | **Blocked** on the human half only — discoverability **done 2026-09-03**: env example, unit file, runbook "Being told", README, `--help`, startup warning; 3 tests | **P0** | — | Operator sets `MYORG_NOTIFY_COMMAND` to a real command and confirms one notice arrives |
-| **B-02** | A named human can stop any non-terminal run in one action | **Done 2026-09-03** — verb, `POST /v1/runs/{id}/cancel`, `GET /v1/runs`, Control Center "Runs" panel with Stop, terminal handling derived from `TERMINAL_RUN`, runbook; 12 tests | — | — | Watch: cancellation frequency (§6 item 8) |
-| **B-01** | One liveness record; the external-worker fence is real | **Done 2026-09-03** — `leases.py` deleted; `/v1/claim` returns `claim_token`; submit/heartbeat/fail require it (400 missing, 409 stale); `renew-claim` mutation; driver adopts an unrenewed claim; 3 boundary tests that failed before | — | — | REV2 "Leases / liveness" row → superseded |
+| **B-02** | A named human can stop any non-terminal run in one action | **Done 2026-09-03** — verb, `POST /v1/runs/{id}/cancel`, `GET /v1/runs`, Control Center "Runs" panel with Stop, terminal handling derived from `TERMINAL_RUN`, `myorg_runs_cancelled` gauge, runbook; 14 tests | — | — | Watch `myorg_runs_cancelled` (§6) |
+| **B-01** | One liveness record; the external-worker fence is real | **Done 2026-09-03** — `leases.py` deleted; `/v1/claim` returns `claim_token`; submit/heartbeat/fail require it (400 missing, 409 stale); `renew-claim` mutation; driver adopts an unrenewed claim; the full takeover sequence (claim → natural expiry → adoption → every stale write refused → new holder completes) is one boundary test | — | — | State fencing only; side-effect replay is B-08 §3 |
 | **B-04** | Every model call is charged to a run or documented as uncharged | **Done 2026-09-03** — measured (§5.4), then: checker review charged on `check-*`; plan cost seeded at `create_run` (`planning_spend_usd`); brief documented as the one accepted undercount; 4 tests | — | — | Re-derive the `$5` default once a real planned run is measured |
-| **B-03** | `suspended` stops new work without silencing the watchers | **Done 2026-09-03** — intake skips, webhook refuses (same refusal), tokens were already refused; `myorg_org_suspended` gauge + 6 h alert; runbook "Pausing the company"; 4 tests | — | — | — |
+| **B-03** | `suspended` means the tenant is off — for the autonomous paths too | **Done 2026-09-03** (re-verified same day) — intake skips, sweep drives nothing, `advance` halts before its next dispatch, agent API offers/claims nothing, webhook refuses, tokens were already refused; in-flight step finishes and records itself; gauge + 6 h alert; 7 tests | — | — | — |
 | **B-05a** | Total spend is alerted on | **Done 2026-09-03** — `MyOrgTotalSpendHigh` at $25 placeholder | — | NOTIFY-01 (to be heard) | Re-threshold after a week of data |
-| **B-09** | One authoritative approval surface | **Decided 2026-09-03** (§6 item 7): Control Center via `api.py` is canonical; `approval_server.py` is the local fallback and gains no verb the API lacks. Retirement needs a memory-decision route first | P2 | — | Add `POST /v1/memory/{id}/decision` when the local server is retired; until then, no new verbs there |
-| **B-08** | An ownership rule between the driver and external workers | **Deferred** — documented (§6 item 6): the two paths, the failure modes, and the one decision owed | P2 | first external worker | Decide before admitting a worker; do not build before |
+| **B-09** | One authoritative approval surface | **Done 2026-09-03** — step decisions on `approval_server.py` are **off by default**; `MYORG_LOCAL_STEP_DECISIONS=1` is the deprecated compatibility path, removed in 0.6.0. Memory decisions stay there until the API has a route. Cancel exists on the API only | P2 | — | `POST /v1/memory/{id}/decision`, then delete the local server's `/decide` and the switch |
+| **B-08** | External-worker admission gate | **Deferred** — documented (§6 item B-08): three decisions owed, not one | P2 | first external worker | Decide all three before admitting a worker; do not build before |
 | **B-06** | A sweep pass cannot be held indefinitely by one run | **Deferred** | P2 | B-03 (same function) | None until head-of-line blocking is observed |
 | **B-05b** | An enforcing fleet spend ceiling | **Deferred** | P3 | B-05a + a week of data | None |
 | **B-07** | Surface `SweepResult.failed` | **Rejected** | — | — | — (STALLED at 30 min covers it) |
@@ -401,83 +401,115 @@ signature, token issue refused, an existing active run still advances, gauge rea
 
 ---
 
-## 6. Critical challenges and missing considerations
+## 6. Open decisions and watch items
 
-Updated 2026-09-03 after the audit pass. Each item says what was verified, what was done, and
-what is deliberately left open.
+What is still owed or still watched. Everything fixed on 2026-09-03 lives in §4's rows and
+§5's build records, not here.
 
-1. **Nobody would have heard the alerts.** Verified: `MYORG_NOTIFY_COMMAND` appeared only in
-   audit documents. Done: env example, unit file, runbook "Being told", README, scheduler
-   `--help`, and a startup warning under `--supervised`; `test_operator_surface` holds all of
-   them. Open: the value itself — a human picks the channel.
-2. **B-01 was worse than framed.** Verified at the HTTP boundary: `submit` read the current
-   token out of the run, so a worker whose claim had been taken over completed the step
-   (race experiment case b). Done: the lease store is deleted; the token is issued at claim
-   and required on every write; heartbeat is a `renew-claim` mutation on the one record.
-   Semantics changed on purpose: an unrenewed claim is **adopted** by the driver (no attempt
-   burned) instead of being **failed** by `reclaim`.
-3. **B-04 was broader than framed.** Measured (§5.4): the checker was half of every RETURN
-   loop and charged nothing; the plan was charged nothing. Both now ride existing
-   transitions. The brief is the one accepted undercount and says so where it lives.
-4. **`suspended` was not dead — it was one-third built.** Verified: `store.actor()` joins on an
-   active organization, so every token was already refused for a suspended org
-   (`test_production_foundation` proves it). Missing were intake and the webhook route; both
-   now check. This makes `suspended` mean *tenant off* — it signs the operator out too. The
-   "stay in the console" pause is the existing per-schedule and per-trigger `enabled` flag;
-   the runbook names both levers. No third mechanism.
-5. **Terminal states drifted in one more place than cycle 3 saw.** Verified:
-   `rejected_by_checker` was set as a run status, handled by `classify`, `DEAD_END` and
-   `COARSE_STATUS`, and **absent from `TERMINAL_RUN`** — so `record_terminal` never fired for
-   it. Added. `classify` now derives from `TERMINAL_RUN` with no hand list;
-   `EveryTerminalStateIsHandledTest` iterates the canonical set and fails on any future
-   member that `classify`, `DEAD_END` or `coarse()` does not stop. `WAITING_STEP` was
-   likewise defined three times (`health`, `executor`, `approvals`) and is now one.
-6. **B-08 — two dispatch paths, no ownership rule. Deferred, documented here.**
-   *The paths:* (a) the in-process driver — `scheduler.sweep` → `executor.advance` →
-   `drive_step`, which claims and dispatches **every** `ready` step it sees; (b) the agent API
-   — `GET /v1/work` offers **every** `ready` step to any bearer of the shared token, and
-   `POST /v1/claim` takes it. Nothing marks a step as belonging to one path. *What arbitrates
-   today:* only the claim fence — whoever claims first wins, and after B-01 the loser is
-   refused rather than silently overwritten. *Failure modes if a worker is admitted now:*
-   (1) the driver claims the step a worker was about to take, so the worker starves and the
-   in-process backend pays; (2) a worker's claim lapses mid-work and the driver adopts and
-   re-does the step — correct, but double spend; (3) two workers with the same bearer token
-   are indistinguishable in the audit log (`holder = api-<agent>`). *The one decision owed
-   before any external worker is admitted:* **who dispatches a given step** — per owner
-   (department X is external, the driver skips it), per step (the plan says so), or per
-   installation (`--no-dispatch`, workers only). The repo establishes no owner: `open_work`
-   and `advance` were written independently and neither cites the other. Not decided here.
-7. **B-09 — two approval surfaces. Decided, smallest consolidation applied.** *What each can
-   do:* `approval_server.py` (port 8787) approves/rejects steps **and** approves/rejects
-   memory proposals; the Control Center via `api.py` approves/rejects steps only. *Who
-   authorizes:* the local server — nobody (no auth, single operator, loopback); the API — a
-   registered human with the `decision-owner` role, org-scoped, with a required reason.
-   *Guarantees differ:* the local server cannot name the human (it takes a typed name), the
-   API binds the decision to an identity. *Canonical:* the settled decision of 2026-09-01
-   (architecture decisions, #6) names the Control Center the canonical approval surface.
-   Applied: cancel was added to the API **only**; the local server gains no verb the API
-   lacks; the runbook and the tracker say so. Not applied: retiring the local server — it is
-   still the only surface for memory decisions, and retiring it needs a
-   `POST /v1/memory/{id}/decision` first. That is the exact remaining step.
-8. **A cancelled run under-reports its cost by one dispatch.** Preserved and documented in
-   `cancel_run`, `charge()` and the runbook. Data examined: `runtime/runs/` holds 5 runs, all
-   `completed`, 0 cancelled — the feature is a day old. Consequence at that magnitude: none.
-   Revisit only if cancelled runs become a visible share of `myorg_runs{state="failed"}`.
-9. **`over_budget` re-reads the whole log per ready step per pass.** Verified
-   (`executor.py:321`, `current_state(run_id)` inside the per-step check). Deliberate: a stale
-   ceiling is not a ceiling. Cost is O(ready steps × log length) per pass; today's logs are
-   tens of events. Watch item — the symptom will be `myorg_runtime_snapshot_duration_seconds`
-   and sweep latency rising together. No cache, no index.
-10. **Compatibility.** `/v1/claim` keeps `lease_expires_at` as an alias for one release and
-    adds `claim_token`, `claim_expires_at`, `renew_every_seconds`; `/v1/submit`, `/v1/fail`,
-    `/v1/heartbeat` now **require** `claim_token` (a breaking change for a worker that
-    existed — none did). `MYORG_LEASE_SECONDS` is gone; `MYORG_CLAIM_SECONDS` is the knob.
-    `runtime/runs/leases.json` is deleted; nothing reads it. `cancelled` and
-    `rejected_by_checker` now trigger `record_terminal`, so each writes one more audit line
-    than before. Old run logs need no migration: no stored status changed meaning.
+**B-08 — external-worker admission gate. Deferred; three decisions, not one.**
+
+*The two dispatch paths.* (a) In-process: `scheduler.sweep` → `executor.advance` →
+`drive_step` claims and dispatches **every** `ready` step it sees. (b) Outside: `GET /v1/work`
+offers **every** `ready` step to any bearer of the one shared token; `POST /v1/claim` takes
+it. Nothing marks a step as belonging to either path; the claim fence is the only arbiter,
+and after B-01 the loser of a race is refused rather than overwritten. `open_work` and
+`advance` were written independently and neither cites the other — the repo establishes no
+owner.
+
+1. **Who dispatches a step.** Per owner (department X is external, the driver skips it), per
+   step (the plan says so), or per installation (`--no-dispatch`, workers only). Undecided.
+   Until decided, an admitted worker races the driver: it starves when the driver claims
+   first, and when its claim lapses the driver adopts and repeats the work.
+2. **Who the worker is.** Today: one shared bearer token (`MYORG_AGENT_TOKEN`) plus a
+   caller-supplied `agent` name, recorded as `holder = api-<agent>`. Verified consequence:
+   any holder of the token may claim any department's steps under any department's name, and
+   two workers sharing the token are indistinguishable in the run log and the audit log. The
+   main API already has the primitive the agent API lacks — actors of type `agent` with
+   roles, issued tokens, and org scoping (`TokenService`, `store.actor`). *Minimum decision:*
+   a worker's credential must be bound to exactly one registered actor identity, and the
+   holder written into the claim must come from that identity, never from the request body.
+   No new auth system; the decision is whether the agent API moves behind the main API's
+   identity model or the token is bound per worker some other way.
+3. **What happens to an external side effect when ownership changes.** The claim fence is
+   *state* fencing: a stale worker cannot change MyOrg (proven end to end in
+   `test_takeover_fences_out_the_old_holder_and_lets_the_new_one_finish`). It cannot undo an
+   email already sent or a record already written before the worker learns it lost the
+   claim, and the new holder will then do the step again. Verified by construction for
+   in-process work: `tools.json` grants only workspace-scoped Read/Write/Edit/Glob/Grep;
+   `Bash`, `WebFetch`, `WebSearch`, `Task`, `Agent` are `UNGRANTABLE`; outward calls go only
+   through the connector gateway, which needs an approval and an idempotency key. So a
+   dispatched in-process step cannot perform a non-idempotent external effect, and adoption
+   after expiry is duplicate *spend*, not duplicate *action*. **An external worker runs
+   outside that sandbox**, so none of this holds for it. *Decision owed:* the replay contract
+   for worker-performed effects — either workers may not perform external effects directly
+   (they must route through the gateway with the step's idempotency key), or the step's
+   claim token doubles as the idempotency key the effect must carry. Not solved now; no
+   worker exists.
+
+**Found while proving B-03 (fixed).** `projection.ensure_org` re-registered the projector
+actor on every pass through `upsert_actor`, which refuses a suspended organization — so the
+read model silently stopped mirroring the moment the company was paused. The projector is
+now registered once, and `upsert_actor(require_active=False)` lets that one service actor
+exist for a suspended organization — tokens for it are still refused, because `actor()`
+joins on an active organization regardless. `SuspendedMeansSuspendedTest` holds it.
+
+**B-09 — remaining step.** Step decisions on the local console are off by default
+(`MYORG_LOCAL_STEP_DECISIONS=1` re-enables them; deprecated, removed in 0.6.0). To retire
+the console: add `POST /v1/memory/{id}/decision` (decision-owner, human, reason), move the
+"Things to remember" section to the Control Center, then delete `approval_server.py`.
+Operational tradeoff while the switch exists: a decision made through it carries only a
+typed name — no role, no org scope, no identity. Anyone turning it on accepts that.
+
+**Cancelled-run accounting — watch.** A cancelled run's `spend_usd` excludes the dispatch it
+interrupted (and its grade). Documented in `cancel_run`, `charge()` and the runbook.
+`myorg_runs_cancelled` now counts the phenomenon directly (cancelled runs read as `failed` in
+`myorg_runs`, so that series is not the trigger). Data so far: 5 runs on disk, 0 cancelled —
+which shows no evidence of impact, not absence of it. Revisit when the bias is material:
+cancelled runs are a noticeable share of runs, **or** dispatch costs vary enough that "one
+dispatch" is a large fraction of a run's bill (a cold first dispatch was measured at ~3.5× a
+warm one). No numeric threshold until there is operating data.
+
+**`over_budget` — watch.** Re-reads the whole run log per ready step per pass
+(`executor.py`, `current_state(run_id)` inside the per-step check). Deliberate; a stale
+ceiling is not a ceiling. Symptom to watch: `myorg_runtime_snapshot_duration_seconds` and
+sweep latency rising together. No cache, no index.
+
+**Compatibility, with removal points.**
+- `/v1/claim` and `/v1/heartbeat` return `lease_expires_at` as a deprecated alias of
+  `claim_expires_at`; **removed in 0.6.0** (`pyproject.toml` is 0.5.0; the repo has no tags,
+  so the version field is the boundary).
+- `/v1/submit`, `/v1/fail`, `/v1/heartbeat` require `claim_token`. Verified: the only
+  in-repository callers are `tests/test_agent_api.py`, `tests/test_grading.py`,
+  `tests/test_ownership.py` — all migrated; no script, example, skill or fixture calls them.
+- `MYORG_LEASE_SECONDS` is deleted outright. Verified: it appeared in `leases.py` and one test
+  only — never in the env example, a unit file, the runbook, README or any deploy artifact —
+  so no operator could have set it. `MYORG_CLAIM_SECONDS` is the knob and is now in the
+  runbook.
+- `MYORG_LOCAL_STEP_DECISIONS` is new, deprecated on arrival, **removed in 0.6.0**.
+- `cancelled` and `rejected_by_checker` now fire `record_terminal` (one more audit line each);
+  `mutate` refuses any run status outside `{"active"} ∪ TERMINAL_RUN`. Stored logs need no
+  migration: no existing status changed meaning.
+
+**The simplicity rule, as an alarm.** If an implementation starts requiring a new dependency,
+service, agent, framework, or parallel subsystem, treat that as a design alarm. Stop and
+reassess whether the requirement can be met with the existing `mutate` path, the state
+model, configuration, or a deletion or generalisation. Proceed with new machinery only if
+repository evidence shows the existing architecture cannot meet the requirement safely.
+
+### Resolved on 2026-09-03 (kept for traceability; detail in §4 and §5)
+
+NOTIFY-01 discoverability · B-01 fence at the boundary, takeover sequence proven · B-02 cancel
++ UI · B-03 suspended = tenant off on every path, in-flight semantics defined · B-04 measured
+then charged · B-05a alert · `rejected_by_checker` added to `TERMINAL_RUN`; `mutate` refuses
+unknown statuses; every terminal transition proven to record itself exactly once ·
+`WAITING_STEP` defined once · B-09 local step decisions off by default · projection no
+longer goes dark for a suspended org · `agent_api.do_POST` reads the body before answering
+404 (a client could see the connection aborted instead of the status; surfaced as a flaky
+test under full-suite load, twice in a row, never in isolation).
 10. **Nothing here needs a dependency, a service, an agent, or a framework.** Every change is a
     verb on `mutate`, a deletion, a config value, or a generalisation of an enumeration. If an
-    implementation starts needing more than that, the design is wrong — stop and come back here.
+    implementation starts requiring more than that, treat it as a design alarm — see §6's
+    last paragraph for the rule.
 
 ---
 

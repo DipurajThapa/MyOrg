@@ -64,6 +64,7 @@ def field(body: dict, name: str) -> str:
 
 def open_work(agent: str | None = None) -> list[dict]:
     """Steps a worker could pick up right now, newest runs last."""
+    from runtime.scheduler import org_suspended
     offers = []
     for run in all_health():
         if run.state not in ("running", "stalled"):
@@ -72,6 +73,8 @@ def open_work(agent: str | None = None) -> list[dict]:
             state = current_state(run.run_id)
         except SystemExit:
             continue
+        if org_suspended(state.get("org_id", "")):
+            continue  # tenant off: nothing is offered, in here or outside
         for step_id, step in sorted(state["steps"].items()):
             if step["status"] != CLAIMABLE:
                 continue
@@ -124,10 +127,13 @@ def claim(body: dict) -> dict:
     from runtime.executor import last_feedback, remembered_for, upstream_handoffs
     run_id, step_id, agent = (field(body, "run_id"), field(body, "step"),
                               field(body, "agent"))
+    from runtime.scheduler import org_suspended
     state = current_state(run_id)
     step = state["steps"].get(step_id)
     if not step:
         raise ApiError(404, f"unknown step: {step_id}")
+    if org_suspended(state.get("org_id", "")):
+        raise ApiError(409, "the organization is suspended; nothing may be claimed")
     if core.claim_is_live(step):
         raise ApiError(409, f"{step_id} is already held by {step['holder']}")
     try:
@@ -153,7 +159,8 @@ def claim(body: dict) -> dict:
             # Renewing is a run event (it costs a cycle), so heartbeat at about half the
             # claim's life, not every few seconds.
             "renew_every_seconds": core.CLAIM_SECONDS // 2,
-            "lease_expires_at": held["claim_expires_at"],  # old name, one release only
+            # Deprecated alias of claim_expires_at; removed in 0.6.0 (pyproject version).
+            "lease_expires_at": held["claim_expires_at"],
             "revision": fresh["workflow_revision"], "prompt": request.prompt()}
 
 
@@ -209,7 +216,8 @@ def heartbeat(body: dict) -> dict:
             request_id=request_id(step_id)))
     except SystemExit as error:
         raise ApiError(409, str(error)) from error
-    return {"claim_expires_at": expires, "lease_expires_at": expires}
+    return {"claim_expires_at": expires,
+            "lease_expires_at": expires}  # deprecated alias, removed in 0.6.0
 
 
 def give_up(body: dict) -> dict:
@@ -268,16 +276,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if not self._guard():
             return
-        handler = ROUTES.get(self.path)
-        if handler is None:
-            self._json({"error": "not found"}, 404)
-            return
         length = int(self.headers.get("Content-Length") or 0)
         if length > MAX_BODY_BYTES:
             self._json({"error": "body too large"}, 413)
             return
+        # Read the body before answering anything, including a 404. Replying with bytes
+        # still unread on the socket makes some clients see the connection aborted
+        # instead of the status -- it showed up as a flaky test under load.
+        raw = self.rfile.read(length)
+        handler = ROUTES.get(self.path)
+        if handler is None:
+            self._json({"error": "not found"}, 404)
+            return
         try:
-            body = json.loads(self.rfile.read(length) or b"{}")
+            body = json.loads(raw or b"{}")
         except json.JSONDecodeError:
             self._json({"error": "body must be JSON"}, 400)
             return

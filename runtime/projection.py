@@ -75,10 +75,16 @@ def ensure_org(store: Store, org_id: str) -> None:
     with store.reading() as connection:
         known = connection.execute(
             "SELECT 1 FROM organizations WHERE id=?", (org_id,)).fetchone()
+        projector = connection.execute(
+            "SELECT 1 FROM actors WHERE org_id=? AND id=?", (org_id, RUNTIME_ACTOR)).fetchone()
     if not known:
         store.bootstrap_organization(org_id, org_id)
-    store.upsert_actor(org_id, RUNTIME_ACTOR, "service", "Runtime projector",
-                       ["chief-of-staff"])
+    if not projector:
+        # Registered once, and regardless of the organization's status: a mirror that
+        # stopped while the company was paused would make the pause look like a healthy
+        # quiet day -- the exact blindness B-03's gauge exists to prevent.
+        store.upsert_actor(org_id, RUNTIME_ACTOR, "service", "Runtime projector",
+                           ["chief-of-staff"], require_active=False)
 
 
 def project_run(store: Store, run_id: str) -> dict | None:

@@ -257,6 +257,11 @@ def mutate(run_id: str, request_id: str, event: str, actor: str, target: str, ch
             raise SystemExit("run reached max_cycles")
         was = state["run_status"]
         change(state)
+        # A run is active or in one of the canonical end states -- nothing else. Every reader
+        # (health, escalation, projection, the ceiling) derives from TERMINAL_RUN, so a status
+        # outside it would be invisible to all of them; refuse it here, once, for every verb.
+        if state["run_status"] != "active" and state["run_status"] not in TERMINAL_RUN:
+            raise SystemExit(f"unknown run status: {state['run_status']!r} is not in TERMINAL_RUN")
         state.update(seq=state["seq"]+1, event=event, actor=actor, target=target, request_id=request_id, ts=now(), cycle_count=state["cycle_count"]+1)
         entry = audit(state) if audit else None
         if entry: audit_log.append(evidence=audit_evidence(run_id), **entry)

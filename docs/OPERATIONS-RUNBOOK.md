@@ -172,13 +172,24 @@ Two levers, both already there. Pick by how much you want to stop.
 way it was registered — `POST /v1/triggers/webhook` with `"enabled": false`. Runs already
 moving keep moving; cancel the ones you do not want (above).
 
-**Stop everything new.** `python -m runtime.admin organization-status --org <org> --status
-suspended`. A suspended organization starts nothing — the scheduler skips intake and the
-webhook route refuses — and **admits nobody**: every token is refused, so the Control Center
-signs you out too. Runs already moving are still driven to their next gate, and the watchers
-(projection, escalation, `/metrics`) keep running; `myorg_org_suspended` reads 1 and
-`MyOrgOrganizationSuspended` fires after six hours so a pause is never mistaken for a quiet
-day. Resume with `--status active`.
+**Stop everything.** `python -m runtime.admin organization-status --org <org> --status
+suspended`. Suspended means the tenant is off: the scheduler starts nothing and drives
+nothing, the webhook route refuses, the agent API offers and claims nothing, and every token
+is refused — so the Control Center signs you out too. A step already dispatched when the
+switch flips finishes and records its own result; the next step is not dispatched. Claims are
+left as they are and simply wait — nothing is rolled back — and the run picks up where it
+stopped on `--status active`. The watchers (projection, escalation, `/metrics`) keep running;
+`myorg_org_suspended` reads 1 and `MyOrgOrganizationSuspended` fires after six hours so a
+pause is never mistaken for a quiet day.
+
+**Deciding steps while paused.** You cannot — suspension refuses your token. Cancel or
+approve what needs it first, then suspend.
+
+**The local approvals console** (`python -m runtime.approval_server`, port 8787) shows the
+queue and still decides *memory* proposals, but no longer decides steps: it has no identity,
+role, organization scope or required reason, and the Control Center does. On a machine with
+no Control Center, `MYORG_LOCAL_STEP_DECISIONS=1` turns the old form back on — deprecated,
+removed in 0.6.0, and every decision it records carries only the name typed into it.
 
 ## Autonomy metrics blind
 

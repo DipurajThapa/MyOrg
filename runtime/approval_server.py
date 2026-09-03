@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -113,7 +114,11 @@ def card(decision: Decision, position: int = 0, total: int = 0) -> str:
         brief_block(decision),
         context_block(decision),
     ]
-    if decision.actionable:
+    if decision.actionable and not local_step_decisions():
+        body.append('<p class="handback">Decide this in the Control Center, where the '
+                    "decision is bound to your identity and role. This console shows the "
+                    "queue; it no longer takes step decisions (B-09).</p>")
+    elif decision.actionable:
         body.append(
             f'<form method="post" action="/decide">'
             f'<input type="hidden" name="run_id" value="{html.escape(decision.run_id)}">'
@@ -230,8 +235,24 @@ def read_form(handler: BaseHTTPRequestHandler) -> dict[str, str]:
     return {key: values[0] for key, values in parsed.items()}
 
 
+LOCAL_STEP_DECISIONS_ENV = "MYORG_LOCAL_STEP_DECISIONS"
+
+
+def local_step_decisions() -> bool:
+    """Whether this console may still approve or reject steps. Off by default since B-09:
+    the Control Center is the canonical approval surface -- it binds a decision to a
+    registered human, a role, an organization and a required reason, and this loopback
+    page can do none of that. The switch is a deprecated compatibility path for a
+    machine with no Control Center; it is removed in 0.6.0. Memory decisions stay here
+    until the API has a route for them."""
+    return os.environ.get(LOCAL_STEP_DECISIONS_ENV, "").strip() == "1"
+
+
 def apply_decision(form: dict[str, str]) -> str:
     """Hand the decision to the runtime and report back in plain words."""
+    if not local_step_decisions():
+        return ("Not recorded: step decisions are made in the Control Center. "
+                f"Set {LOCAL_STEP_DECISIONS_ENV}=1 to allow them here (deprecated, 0.6.0).")
     approve = form.get("verdict") == "approve"
     try:
         decide(form.get("run_id", ""), form.get("step", ""), approve,

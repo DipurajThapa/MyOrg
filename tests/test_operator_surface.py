@@ -109,33 +109,89 @@ class SuspendedMeansSuspendedTest(unittest.TestCase):
         self.store.set_organization_status("acme", "suspended")
         self.assertEqual(self.store.organization_status("acme"), "suspended")
 
-    def test_a_suspended_organization_starts_nothing_but_still_drives_and_watches(self):
-        from runtime.planner import StubPlannerBackend
-        from runtime.executor import StubBackend
-        # One run already moving, created before the pause.
+    def make_run(self, run_id: str) -> None:
         workflow = ROOT / "runtime" / "workflows" / "manual-gold-run.json"
         self.executor.quietly(self.core.create_run, self.executor.namespace(
-            workflow=str(workflow), run_id="sus-moving", actor="chief-of-staff",
-            request_id="create-sus", org="acme"))
+            workflow=str(workflow), run_id=run_id, actor="chief-of-staff",
+            request_id=f"create-{run_id}", org="acme"))
+
+    def done(self, run_id: str) -> int:
+        state = self.core.read_events(run_id)[-1]
+        return sum(s["status"] == "completed" for s in state["steps"].values())
+
+    def test_a_suspended_organization_starts_nothing_drives_nothing_and_still_watches(self):
+        """Tenant off means off for the autonomous paths too -- not only for the paths that
+        happen to authenticate. A ready run is left exactly where it was."""
+        from runtime.planner import StubPlannerBackend
+        from runtime.executor import StubBackend
+        self.make_run("sus-moving")
         self.store.set_organization_status("acme", "suspended")
 
         result = self.scheduler.sweep(StubBackend(), log=self.logs.append,
                                       planner_backend=StubPlannerBackend())
 
         self.assertEqual(result.started, [], "intake must start nothing while suspended")
+        self.assertNotIn("sus-moving", result.driven, "a suspended org's runs are not driven")
+        self.assertIn("sus-moving", result.skipped)
+        self.assertEqual(self.done("sus-moving"), 0)
         self.assertTrue(any("suspended" in line for line in self.logs))
-        self.assertIn("sus-moving", result.driven, "runs already moving are still driven")
-        state = self.core.read_events("sus-moving")[-1]
-        self.assertEqual(sum(s["status"] == "completed" for s in state["steps"].values()), 3)
-        # The schedule is still due -- it will fire the moment the pause is lifted.
+        # The watchers still ran: the sweep projected and escalated as usual.
+        self.assertTrue(self.store.runs("acme"), "projection still mirrors while suspended")
+        # The schedule is still due -- it fires the moment the pause is lifted, and the
+        # run picks up where it stopped.
         self.assertTrue(self.store.schedules("acme")[0]["enabled"])
         self.store.set_organization_status("acme", "active")
         resumed = self.scheduler.sweep(StubBackend(), log=self.logs.append,
                                        planner_backend=StubPlannerBackend())
         self.assertEqual(len(resumed.started), 1)
+        self.assertIn("sus-moving", resumed.driven)
+        self.assertEqual(self.done("sus-moving"), 3)
         for run_id in resumed.started:
             self.addCleanup(lambda r=run_id: (ROOT / "runtime" / "workflows" / f"{r}.json")
                             .unlink(missing_ok=True))
+
+    def test_suspension_mid_pass_lets_the_dispatched_step_finish_and_stops_the_next(self):
+        """The one in-flight semantics: a claim already dispatched records its own result;
+        the *next* dispatch does not happen. No claim is broken, nothing is rolled back."""
+        from runtime.executor import StubBackend
+        store, test = self.store, self
+
+        class SuspendsDuringFirstStep(StubBackend):
+            fired = False
+
+            def __call__(self, request):
+                if request.kind == "work" and not self.fired:
+                    self.fired = True
+                    store.set_organization_status("acme", "suspended")  # another process
+                return super().__call__(request)
+
+        self.make_run("sus-flight")
+        result = self.scheduler.sweep(SuspendsDuringFirstStep(), log=self.logs.append)
+        self.assertIn("sus-flight", result.driven)
+        state = self.core.read_events("sus-flight")[-1]
+        self.assertEqual(state["steps"]["frame-goal"]["status"], "completed",
+                         "the step in flight when suspension landed still completed")
+        self.assertEqual(state["steps"]["produce-output"]["status"], "ready",
+                         "the next step was ready and was not dispatched")
+        self.assertTrue(any("not driven -- the organization is suspended" in line
+                            for line in self.logs))
+        test.assertEqual(state["run_status"], "active")
+
+    def test_the_agent_api_offers_and_claims_nothing_while_suspended(self):
+        import importlib
+        from runtime import agent_api
+        api = importlib.reload(agent_api)
+        self.addCleanup(lambda: importlib.reload(agent_api))
+        self.make_run("sus-api")
+        self.assertEqual([w["run_id"] for w in api.open_work()], ["sus-api"])
+        self.store.set_organization_status("acme", "suspended")
+        self.assertEqual(api.open_work(), [])
+        with self.assertRaises(api.ApiError) as refused:
+            api.claim({"run_id": "sus-api", "step": "frame-goal", "agent": "chief-of-staff"})
+        self.assertEqual(refused.exception.status, 409)
+        self.assertIn("suspended", str(refused.exception))
+        self.assertFalse(self.core.claim_is_live(
+            self.core.read_events("sus-api")[-1]["steps"]["frame-goal"]))
 
     def test_the_metrics_say_so(self):
         from runtime.observability import RuntimeGauges

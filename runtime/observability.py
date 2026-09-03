@@ -135,9 +135,15 @@ class RuntimeGauges:
     def _runs(self, sample: dict, now: datetime) -> None:
         from runtime.health import all_health
         counts = dict.fromkeys(RUN_STATES, 0)
+        cancelled = 0
         for run in all_health(now):
             counts[run.state] = counts.get(run.state, 0) + 1
+            cancelled += run.runtime_status == "cancelled"
         sample["runs"] = counts
+        # Cancelled runs read as "failed" above. They are counted on their own because each
+        # one under-reports its cost by the dispatch it interrupted (B-02): this is the
+        # number to watch before deciding whether that accounting gap matters.
+        sample["runs_cancelled"] = cancelled
 
     def _approvals(self, sample: dict, now: datetime) -> None:
         from runtime import approvals
@@ -222,7 +228,7 @@ class RuntimeGauges:
                         "receipts_in_flight": 0, "receipt_unsettled_seconds_max": 0.0,
                         "authorization_expires_seconds": NO_AUTHORIZATION_EXPIRY,
                         "spend_usd_total": 0.0, "spend_usd_worst_run": 0.0,
-                        "org_suspended": 0, "ok": 1}
+                        "org_suspended": 0, "runs_cancelled": 0, "ok": 1}
         for source in (self._runs, self._approvals, self._notices, self._triggers,
                        self._receipts, self._authorizations, self._spend, self._suspension):
             try:
@@ -255,6 +261,9 @@ class RuntimeGauges:
         for state in RUN_STATES:
             lines.append(f'myorg_runs{{state="{state.replace(" ", "_")}"}} {sample["runs"].get(state, 0)}')
         lines.extend((
+            "# HELP myorg_runs_cancelled Runs a person stopped; each under-reports cost by one dispatch.",
+            "# TYPE myorg_runs_cancelled gauge",
+            f'myorg_runs_cancelled {sample["runs_cancelled"]}',
             "# HELP myorg_approvals_waiting Steps parked for a human decision.",
             "# TYPE myorg_approvals_waiting gauge",
             f'myorg_approvals_waiting {sample["approvals_waiting"]}',

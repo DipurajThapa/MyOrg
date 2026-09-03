@@ -74,6 +74,25 @@ def trigger_store():
     return Store(path) if path.is_file() else None
 
 
+def org_suspended(org_id: str) -> bool:
+    """Suspended means the tenant is off: no intake, no webhooks, no tokens -- and no
+    driving. Read fresh every time it is asked, because the point of suspension is that it
+    takes effect while a pass is already under way. A log-only install has no store and
+    therefore no suspension."""
+    try:
+        store = trigger_store()
+        return store is not None and store.organization_status(org_id) == "suspended"
+    except Exception:  # noqa: BLE001 - an unreadable store must not stop the company
+        return False
+
+
+def run_org(run_id: str) -> str:
+    try:
+        return core.read_events(run_id)[-1].get("org_id", "")
+    except SystemExit:
+        return ""
+
+
 def intake(planner_backend, log=print) -> list[dict]:
     """Fire whatever the clock is due, then turn queued triggers into runs.
 
@@ -89,9 +108,8 @@ def intake(planner_backend, log=print) -> list[dict]:
         from runtime import triggers
         org = os.environ.get("MYORG_ORG_ID", "default")
         if store.organization_status(org) != "active":
-            # Suspended means suspended (B-03): nothing new starts. Runs already moving are
-            # still driven below, and the watchers still watch -- a paused company must
-            # never look like a healthy quiet one.
+            # Suspended means suspended (B-03): nothing new starts, nothing is driven. The
+            # watchers still watch -- a paused company must never look like a quiet one.
             log(f"  intake skipped: organization {org} is suspended")
             return []
         triggers.fire_due_schedules(store, org, log=log)
@@ -115,8 +133,13 @@ def sweep(backend, max_iterations: int = MAX_ITERATIONS, log=print,
         if run.state not in MOVABLE:
             result.skipped.append(run.run_id)
             continue
+        org = run_org(run.run_id)
+        if org_suspended(org):
+            result.skipped.append(run.run_id)
+            continue
         try:
-            advance(run.run_id, backend, max_iterations=max_iterations, log=log)
+            advance(run.run_id, backend, max_iterations=max_iterations, log=log,
+                    halt=lambda org=org: org_suspended(org))
             result.driven.append(run.run_id)
         except (ExecutorError, SystemExit) as error:
             result.failed[run.run_id] = str(error)
