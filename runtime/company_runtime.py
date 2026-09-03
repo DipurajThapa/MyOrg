@@ -457,7 +457,13 @@ def hold(args) -> None:
         return {"actor": args.actor, "action": step["action"], "category": step["risk"],
                 "target": f"{args.run_id}/{args.step}", "approval": "pending",
                 "outcome": "awaiting-approval",
-                "note": "a quality gate could not run, so the work waits for a person"}
+                # The record has to say which decision is being asked for. This was
+                # hardcoded to the quality wording, so every cost stop went into the
+                # accountability log as a broken gate -- and an auditor reading it would
+                # find no quality problem to explain it.
+                "note": ("the run reached its cost ceiling, so spending more waits for a person"
+                         if step.get("held_kind") == "budget"
+                         else "a quality gate could not run, so the work waits for a person")}
     mutate(args.run_id,args.request_id,"step.held",args.actor,args.step,change,audit); print("awaiting_approval")
 
 

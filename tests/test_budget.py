@@ -152,6 +152,21 @@ class CeilingTest(BudgetTestBase):
         self.assertIn("$0.60", reason)
         self.assertIn("$0.50", reason)
 
+    def test_the_audit_log_says_which_decision_is_being_asked_for(self) -> None:
+        """The note was hardcoded to the quality wording, so every cost stop was recorded as
+        a broken gate. An auditor reading the log would look for a quality problem that
+        never existed -- in the one record the whole design rests on."""
+        os.environ["MYORG_RUN_CEILING_USD"] = "0.50"
+        self.make_run("bud-audit", steps=2)
+        self.executor.advance("bud-audit", CostingBackend(0.60), log=self.logs.append)
+        entries = [json.loads(line) for line
+                   in Path(os.environ["MYORG_AUDIT_LOG"]).read_text(encoding="utf-8").splitlines()
+                   if line.strip()]
+        held = [e for e in entries if e.get("outcome") == "awaiting-approval"]
+        self.assertTrue(held, "the stop must be on the record at all")
+        self.assertIn("cost ceiling", held[-1]["note"])
+        self.assertNotIn("quality gate", held[-1]["note"])
+
     def test_approving_a_budget_stop_buys_the_work_rather_than_accepting_it(self) -> None:
         """A step parked on the ceiling was never dispatched, so its "evidence" is the
         budget notice the runtime wrote. Completing with that handed a checker a receipt to
