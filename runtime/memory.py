@@ -132,10 +132,17 @@ def propose(subject: str, body: str, author: str, kind: str = "lesson",
     if not subject or not body:
         raise SystemExit("a memory needs both a subject and a body")
     existing = current(org_id)
-    if any(e.subject.lower() == subject.lower() and e.status in ("proposed", LIVE)
-           for e in existing):
+    # "Already known" means this same lesson, not this same department. Identity used to be
+    # the subject alone, and the only caller builds subjects like "<owner> on <action>
+    # work" -- so the company could hold exactly one lesson per department-and-action pair,
+    # for ever. The first rejection's insight was kept and every later one was dropped
+    # before a person saw it: three different research lessons about pricing sources,
+    # market sizing and quote-gated categories all collapse onto one row.
+    if any(e.subject.lower() == subject.lower() and e.body.lower() == body.lower()
+           and e.status in ("proposed", LIVE) for e in existing):
         return None
-    identifier = f"mem-{hashlib.sha256(subject.lower().encode()).hexdigest()[:10]}"
+    fingerprint = f"{subject.lower()}|{body.lower()}".encode()
+    identifier = f"mem-{hashlib.sha256(fingerprint).hexdigest()[:10]}"
     append_record(org_id, {
         "id": identifier, "ts": now(), "kind": kind, "subject": subject, "body": body,
         "author": author, "status": "proposed", "source_run": source_run,

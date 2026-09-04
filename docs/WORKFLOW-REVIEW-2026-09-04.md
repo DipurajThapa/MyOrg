@@ -245,3 +245,59 @@ the only honest answer to a timeout.
   `decide_approval` unlocks one outward call. The code says so deliberately
   (`service.py`), and `company/operating-principles.md` documents both. Nothing wires one to
   the other, so a real outward action needs two human decisions. Correct but worth knowing.
+
+---
+
+## Stage 5 — Completion, and what the company learns
+
+**Path.** A checker rejection → `checking.propose_lesson` → `memory.propose` (status
+`proposed`) → a human keeps or discards it in the console → `memory.recall` pulls approved
+entries by keyword overlap → `executor_steps.remembered_for` puts them in the next agent's
+dispatch prompt. Terminal runs write themselves to the audit log; evidence stays on disk and
+is readable through `run_output`.
+
+**The loop is genuinely wired.** Propose → approve → reuse all exist and connect. Recall is
+plain keyword overlap on purpose, so an operator can always see why a memory surfaced, and it
+never blocks the work.
+
+### Fixed
+
+**The company could only ever learn one lesson per department-and-action pair.** `propose()`
+derived a lesson's identity from its *subject* alone, and the only caller in the runtime
+builds every subject as `"{owner} on {action} work"`. So the first rejection from a given
+department was kept and every later one was dropped — `propose` returned `None` and
+`checking.py` did `if entry:`, so the checker's insight disappeared without even a log line.
+
+Run against the real module, three genuinely different research lessons collapse to one:
+
+```
+1st proposal: mem-9ca1678e00
+2nd proposal: None   <-- a different lesson, same pair
+3rd, after the 1st was approved: None
+```
+
+Identity now keys on subject **and** body, so different lessons coexist while the identical
+one is still refused. The subject names the step as well, because several proposals from one
+department are otherwise indistinguishable in the queue a person reads. And "we already know
+this" is logged rather than silent.
+
+Mutation-checked: reverting the fix fails the new test with *"unexpectedly None: a second
+lesson from the same pair must not vanish"*.
+
+### Raised for a decision
+
+- **A completed run tells nobody.** `escalate_run` raises a notice for `FAILED`, `WAITING`
+  and `STALLED`; `FINISHED` raises nothing and there is no `RUN_COMPLETED` kind. Defensible
+  under exception-based autonomy — no news is good news — but two things cut against it: the
+  operator *is* told when their idea fails (`IDEA_FAILED`), so the asymmetry is odd, and
+  `LESSON_PROPOSED` already notifies about a good thing that needs attention. As it stands,
+  somebody who asked for work has to keep opening the console to find out it is ready.
+
+### Known and accepted
+
+- **Lessons only come from checker rejections.** A step with no checker, and a run that
+  simply fails, teach the company nothing. Deliberate — a rejection is a clear, attributable
+  signal — but it means unchecked work never contributes.
+- **`EVIDENCE_DIR` is the repository tree, not `MYORG_RUNS_DIR`.** Already commented in the
+  code and in a test's setup; evidence must resolve under the repository root to be accepted
+  at all.

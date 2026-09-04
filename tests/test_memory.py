@@ -107,6 +107,28 @@ class MemoryTest(unittest.TestCase):
 
     # --- integrity ------------------------------------------------------------------
 
+    def test_two_different_lessons_from_one_department_both_survive(self):
+        """Identity was the subject alone, and the only caller in the runtime builds every
+        subject as "<owner> on <action>" -- so the company could hold exactly one lesson per
+        department-and-action pair, for ever. The first rejection's insight was kept and
+        every later one was dropped before a person could see it: `propose` returned None
+        and the checker had nothing to show for the review.
+        """
+        subject = "chief-knowledge-officer on research (market-scan)"
+        bodies = ["Cite the vendor's own pricing page, not a comparison blog for prices.",
+                  "Every candidate needs one sourced market-size figure, even a skip."]
+        first = self.memory.propose(subject, bodies[0], "head-of-data")
+        second = self.memory.propose(subject, bodies[1], "head-of-data")
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second, "a second lesson from the same pair must not vanish")
+        self.assertNotEqual(first.id, second.id, "two lessons, two rows")
+        self.assertIsNone(self.memory.propose(subject, bodies[0], "head-of-data"),
+                          "the identical lesson is still refused")
+        for entry in (first, second):
+            self.memory.decide(entry.id, self.memory.LIVE, "dipuraj")
+        recalled = self.memory.recall("pricing market size candidate research")
+        self.assertEqual(len(recalled), 2, "both are reusable, not just the first one")
+
     def test_the_same_lesson_is_not_proposed_twice(self):
         first = self.propose()
         self.assertIsNotNone(first)

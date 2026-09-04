@@ -60,13 +60,21 @@ def propose_lesson(run_id, step_id, step, checker, review, log) -> None:
     if not headline:
         return
     try:
-        entry = propose(subject=f"{step['owner']} on {step['action']} work",
+        # The step is in the subject because the queue is read by a person: several lessons
+        # can now come from one department and one action, and "cto-engineering on
+        # internal_write work" three times over tells them nothing about which is which.
+        entry = propose(subject=f"{step['owner']} on {step['action']} ({step_id})",
                         body=headline, author=checker, kind="lesson",
                         source_run=run_id, source_step=step_id)
     except SystemExit:
         return
     if entry:
         log(f"  {step_id}: proposed a lesson for your approval ({entry.id})")
+    else:
+        # Not silence. `propose` returning nothing means the company already holds this
+        # exact lesson, which is worth seeing in the log rather than looking like the
+        # checker had nothing to say.
+        log(f"  {step_id}: the same lesson is already on the books -- not proposed again")
 
 
 def drive_check(run_id, step_id, state, backend, log, *,
