@@ -228,10 +228,16 @@ class ApiGradingTest(unittest.TestCase):
                                      "agent": "cto-engineering"})["claim_token"]
 
     def break_the_grader(self) -> None:
-        """Replace the name `submit` actually calls -- no model is reached."""
+        """Replace the name `submit` actually calls -- no model is reached.
+
+        That name lives in `agent_work` beside `submit`; `agent_api` is the HTTP boundary
+        around it, and patching the boundary would leave the real one in place. Reloading
+        `agent_api` in cleanup reloads `agent_work` with it, so this is undone."""
+        from runtime import agent_work
+
         def broken(*_args, **_kwargs):
             raise self.executor.GraderUnavailable("grader unavailable (simulated outage)")
-        self.api.graded_failure = broken
+        agent_work.graded_failure = broken
 
     # A deliverable that would pass its criteria, so only the broken gate can stop it.
     GOOD_WORK = ("Owner: the CTO owns this deliverable end to end.\n"

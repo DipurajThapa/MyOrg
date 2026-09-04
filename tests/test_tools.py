@@ -85,7 +85,10 @@ class GrantTest(unittest.TestCase):
         results are data. Binding the warning to `reaches_outward` rather than to a
         department's own file is what stops a future grant arriving without it."""
         from runtime import executor
-        source = (ROOT / "runtime" / "executor.py").read_text(encoding="utf-8")
+        # Every file the executor is split across: the binding is what matters, not which
+        # of them holds it.
+        source = "".join(path.read_text(encoding="utf-8")
+                         for path in sorted((ROOT / "runtime").glob("executor*.py")))
         self.assertIn("tools.reaches_outward(grant)", source)
         self.assertIn("tools.NETWORK_WARNING", source)
         self.assertTrue(tools.reaches_outward(tools.grant_for("chief-knowledge-officer")))
