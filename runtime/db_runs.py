@@ -146,6 +146,13 @@ class RunsMixin:
                 "SELECT * FROM approvals WHERE org_id=? AND status='pending' "
                 "ORDER BY requested_at, rowid LIMIT ?", (org_id, int(limit)))]
 
+    def all_pending_approvals(self, limit: int = 100) -> list[dict]:
+        """Every organization's undecided outward calls, for the escalation sweep."""
+        with self.reading() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM approvals WHERE status='pending' ORDER BY requested_at "
+                "LIMIT ?", (int(limit),))]
+
     def approval(self, org_id: str, approval_id: str) -> dict:
         with self.reading() as connection:
             return self._approval(connection, org_id, approval_id)

@@ -98,6 +98,36 @@ class EscalationTest(unittest.TestCase):
         self.assertFalse(notice.blocking)
         self.assertIn("Redlines stall onboarding", notice.detail)
 
+    def test_a_finished_run_says_so(self):
+        """The only good news this scan reports, and the asymmetry it fixes was odd: a
+        person was told when their request died and never when it worked, so collecting the
+        answer meant going back to look. Routine, so it never buries a decision."""
+        self.park("esc-done")
+        for step, detail in self.core.read_events("esc-done")[-1]["steps"].items():
+            if detail["status"] == "awaiting_approval":
+                self.executor.quietly(self.core.approve, self.executor.namespace(
+                    run_id="esc-done", step=step, approver="Owner", actor_id="owner",
+                    approval_ref="fine", request_id=f"ap-{step}"))
+        self.executor.advance("esc-done", self.executor.StubBackend(), log=self.logs.append)
+
+        raised = self.escalation.scan(log=self.logs.append)
+        notice = next(n for n in raised if n.kind == self.notify.RUN_COMPLETED)
+        self.assertFalse(notice.blocking, "good news must not outrank a decision")
+        self.assertEqual(notice.severity, "routine")
+        self.assertEqual(notice.run_id, "esc-done")
+        self.assertIn("is done", notice.detail)
+
+    def test_a_stray_file_beside_the_runs_is_not_a_failed_run(self):
+        """Anything ending .jsonl in the runs directory used to be opened as a run and
+        reported as a failed one when it would not parse. Those reports are notices now, so
+        a memory store copied in beside the runs became an inbox saying a run had stopped
+        and could not continue. A run id is a shape; nothing else is read as one.
+        """
+        for name in ("acme.memory.jsonl", "notes.backup.jsonl", "UPPER.jsonl"):
+            (Path(self._tmp.name) / name).write_text("not a run", encoding="utf-8")
+        self.assertEqual(self.escalation.scan(log=self.logs.append), [])
+        self.assertEqual(self.notify.outstanding(), [])
+
     def test_a_healthy_run_bothers_nobody(self):
         self.create("esc-fine")
         self.assertEqual(self.escalation.scan(log=self.logs.append), [])

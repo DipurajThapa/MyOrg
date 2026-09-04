@@ -160,9 +160,16 @@ def validate_workflow(data: dict) -> None:
 
 
 def run_files() -> list[Path]:
-    """Every file that is actually a run. `_`-prefixed files are sidecars: a run id
-    must start with a letter, so the two can never collide."""
-    return sorted(p for p in RUNS.glob("*.jsonl") if not p.stem.startswith("_"))
+    """Every file that is actually a run.
+
+    The name has to be a run id, not merely something that is not a sidecar. `_`-prefixed
+    files were already excluded, which left every other `.jsonl` in this directory being
+    opened as a run and reported as a *failed* one when it would not parse -- and those
+    reports are notices now, so a stray file becomes somebody's inbox telling them a run
+    has stopped and cannot continue. A memory store copied in beside the runs did exactly
+    that. Nothing else can name itself like a run id, so nothing else is read as one.
+    """
+    return sorted(p for p in RUNS.glob("*.jsonl") if ID_RE.fullmatch(p.stem))
 
 
 def run_path(run_id: str) -> Path:

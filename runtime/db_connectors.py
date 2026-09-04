@@ -219,6 +219,18 @@ class ConnectorsMixin:
                 "SELECT id,connector_id,idempotency_key,outcome_note,created_at FROM connector_receipts "
                 "WHERE org_id=? AND status='in_flight' ORDER BY created_at", (org_id,))]
 
+    def all_in_flight_receipts(self, limit: int = 100) -> list[dict]:
+        """Every organization's unresolved calls, for the escalation sweep.
+
+        A call that left and never settled is the sharpest thing in this company that can
+        need a person: nothing may retry it, because nobody knows whether it happened.
+        """
+        with self.reading() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT id,org_id,connector_id,idempotency_key,outcome_note,created_at "
+                "FROM connector_receipts WHERE status='in_flight' ORDER BY created_at "
+                "LIMIT ?", (int(limit),))]
+
     def unreconciled_connector_receipts(self, org_id: str) -> list[dict]:
         with self.reading() as connection:
             rows = connection.execute(

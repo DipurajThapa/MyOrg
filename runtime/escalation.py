@@ -15,10 +15,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from runtime.health import FAILED, STALLED, WAITING, all_health  # noqa: E402
-from runtime.notify import (IDEA_FAILED, IDEA_STUCK, LESSON_PROPOSED,  # noqa: E402
-                            NEEDS_APPROVAL, RUN_FAILED, RUN_STALLED, outstanding,
-                            raise_notice, render)
+from runtime.health import FAILED, FINISHED, STALLED, WAITING, all_health  # noqa: E402
+from runtime.notify import (CALL_APPROVAL, CALL_UNRESOLVED, IDEA_FAILED,  # noqa: E402
+                            IDEA_STUCK, LESSON_PROPOSED, NEEDS_APPROVAL, RUN_COMPLETED,
+                            RUN_FAILED, RUN_STALLED, outstanding, raise_notice, render)
 
 # Mirrors health.STALLED_AFTER_MINUTES: the same span of nothing happening is the same
 # kind of news, whether the work is a run that stopped moving or a request that cannot
@@ -96,6 +96,17 @@ def escalate_run(run) -> list:
         notice = raise_notice(
             RUN_STALLED, f"{run.run_id} has gone quiet",
             run.detail, "Check whether the driver is still running.",
+            org_id=org, run_id=run.run_id)
+        if notice:
+            raised.append(notice)
+    elif run.state == FINISHED:
+        # The one piece of good news this scan reports. Everything else here is a thing
+        # going wrong, which left the company able to tell somebody their request had died
+        # and unable to tell them it had worked.
+        notice = raise_notice(
+            RUN_COMPLETED, f"{run.run_id} finished",
+            f"“{run.goal}” is done. All {run.total} step(s) completed.",
+            "Open the board and read what it produced.",
             org_id=org, run_id=run.run_id)
         if notice:
             raised.append(notice)
@@ -179,6 +190,48 @@ def escalate_stuck_ideas(store) -> list:
     return raised
 
 
+def escalate_connector_calls() -> list:
+    """The two things the connector gate can be waiting on, neither of which was ever raised.
+
+    An outward call proposed and undecided is the strictest gate in this company, and it
+    expires -- so silence here means the decision is missed rather than delayed. A call that
+    left and never settled is worse: nothing may retry it, because nobody knows whether it
+    happened, and only a person can go and look.
+    """
+    try:
+        from runtime.projection import DB_ENV, default_db
+        import os
+        if DB_ENV not in os.environ and not default_db().is_file():
+            return []  # no store configured; there are no connectors to look at
+        from runtime.db import Store
+        store = Store(default_db())
+        waiting = store.all_pending_approvals()
+        unresolved = store.all_in_flight_receipts()
+    except Exception:  # noqa: BLE001 - escalation must never stop the driver
+        return []
+    raised = []
+    for row in waiting:
+        notice = raise_notice(
+            CALL_APPROVAL, f"{row['action']} to {row['target_ref']} is waiting for you",
+            f"{row['requested_by']} proposed it for run {row['run_id']}, sending "
+            f"{row['payload_ref']}. It can no longer be approved after {row['expires_at']}.",
+            "Open the board and approve or reject it.",
+            org_id=row["org_id"], run_id=row["run_id"], step_id=row["id"])
+        if notice:
+            raised.append(notice)
+    for row in unresolved:
+        notice = raise_notice(
+            CALL_UNRESOLVED, f"a call to {row['connector_id']} never came back",
+            f"Receipt {row['id']} left at {row['created_at']} and never settled: "
+            f"{(row['outcome_note'] or 'no answer was recorded').strip()[:200]}. "
+            "Nobody knows whether it happened, so nothing will retry it.",
+            "Check the other end, then record what you found with `reconcile`.",
+            org_id=row["org_id"], run_id=row["id"])
+        if notice:
+            raised.append(notice)
+    return raised
+
+
 def scan(log=print) -> list:
     """Look over the whole company and raise whatever a person needs to know."""
     raised = []
@@ -186,6 +239,7 @@ def scan(log=print) -> list:
         raised.extend(escalate_run(run))
     raised.extend(escalate_memory())
     raised.extend(escalate_ideas())
+    raised.extend(escalate_connector_calls())
     if raised:
         log(f"escalated {len(raised)} new notice(s)")
     return raised

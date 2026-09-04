@@ -41,10 +41,25 @@ IDEA_FAILED = "idea_failed"
 # spends no attempt, which is right for a busy minute and wrong for a long outage: without
 # this the request would retry every sweep forever and nobody would ever be told.
 IDEA_STUCK = "idea_stuck"
+# Work that finished. The only notice here that is not about something being wrong -- and
+# the asymmetry it fixes was odd: a person was told when their request died and never when
+# it succeeded, so the only way to collect the answer was to keep opening the screen.
+# Routine, so it queues behind anything blocking and never buries a decision someone is
+# waiting on.
+RUN_COMPLETED = "run_completed"
+# A proposed outward call. The step gate already raised `needs_approval`; this is the other
+# gate -- the one that binds an exact payload and actually sends it. It could be created and
+# decided and nothing in between ever said it was waiting, so it went unmentioned on screen
+# and unmentioned here, and it expires.
+CALL_APPROVAL = "call_approval"
+# A call that left and never settled. Nothing may retry it, because nobody knows whether it
+# happened; only a person can find out and record what they found.
+CALL_UNRESOLVED = "call_unresolved"
 SMOKE_TEST = "smoke_test"
 SEVERITY = {NEEDS_APPROVAL: "blocking", RUN_FAILED: "blocking", IDEA_FAILED: "blocking",
+            CALL_APPROVAL: "blocking", CALL_UNRESOLVED: "blocking",
             RUN_STALLED: "attention", IDEA_STUCK: "attention",
-            LESSON_PROPOSED: "routine", SMOKE_TEST: "routine"}
+            LESSON_PROPOSED: "routine", RUN_COMPLETED: "routine", SMOKE_TEST: "routine"}
 STDERR_TAIL_CHARS = 400
 
 

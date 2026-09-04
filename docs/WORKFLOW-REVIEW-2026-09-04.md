@@ -399,3 +399,51 @@ the board alike:
   renewal is on a timer that a browser may throttle in a background tab. A 401 now fetches a
   fresh token and retries once — once only, because a second refusal is a real one. The
   request id is decided before the first attempt, so a retried write cannot land twice.
+
+---
+
+## Notifications — the part that makes the rest usable
+
+A board only helps somebody who is looking at it. Everything above assumes an operator opens
+a screen; this is what happens when they do not.
+
+### What was never raised at all
+
+`escalation.scan` covered runs, memory and requests. It never looked at the connector gate,
+so **the two sharpest things in the company were silent**:
+
+| Missing | Why it matters |
+|---|---|
+| **A proposed outward call** (`call_approval`) | The strictest gate here, and it *expires*. Silence meant the decision was missed rather than delayed — and Stage 4 had already found this gate unreachable on screen, so it was unreachable in both places at once. |
+| **A call that left and never settled** (`call_unresolved`) | Nothing may retry it, because nobody knows whether it happened. Only a person can go and look. |
+
+And a finished run raised nothing, which left the odd asymmetry the operator noticed: they
+were told when their request died and never when it worked.
+
+### Coverage now
+
+Blocking — a step waiting on a decision · an outward call waiting · a call unresolved · a run
+stopped · a request the planner gave up on. Attention — a run gone quiet · a request retrying
+too long. Routine — a lesson to keep · **a run that finished**.
+
+Proved against a seeded runtime: six kinds raised, six delivered, blocking first, none
+repeated on a second sweep.
+
+### Delivery
+
+The runtime still sends nothing itself. `deploy/notify-email.py` is a second sink beside the
+GitHub one, and it exists because the runbook already conceded that the GitHub inbox *"works
+and the alert does not"* — GitHub never notifies an account of its own actions. Settings come
+from the environment, the recipient included: a personal address is not repository content,
+and this repository is public. Only one delivery command runs, so this replaces the GitHub
+sink rather than joining it, and the runbook says so.
+
+### A phantom that would have become email
+
+Any `.jsonl` in the runs directory was opened as a run and reported as a **failed** one when
+it would not parse. A memory store copied in beside the runs did exactly that, twice, during
+this work. Harmless while it was a line in a log; not harmless once those reports are sent to
+somebody. `run_files()` now requires the run-id shape, so nothing else is read as a run.
+
+Corrected along the way: I first blamed `shlex` for mangling Windows paths in the delivery
+command. It does not — `deliver()` already passes `posix=os.name != "nt"` and says why.

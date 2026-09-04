@@ -133,6 +133,39 @@ issues must belong to a different identity (a second account or a GitHub App) an
 operator must be watching the repository. Until that is true, the inbox works and the
 alert does not.
 
+**Email, when you want the alert and not only the inbox.** The paragraph above is the reason
+this exists: an issue opened by the account meant to read it notifies nobody, so the GitHub
+sink is a record rather than a summons. `deploy/notify-email.py` is the other sink, and it
+does reach a person.
+
+```
+MYORG_NOTIFY_COMMAND="python deploy/notify-email.py"
+MYORG_NOTIFY_EMAIL="you@example.com"
+MYORG_SMTP_HOST="smtp.gmail.com"
+MYORG_SMTP_USER="you@example.com"
+MYORG_SMTP_PASSWORD="the app password, never the account password"
+```
+
+`MYORG_SMTP_PORT` defaults to 587 with STARTTLS and `MYORG_SMTP_FROM` to `MYORG_SMTP_USER`.
+Gmail issues an App Password only with two-factor sign-in on, and refuses the account
+password outright. Certificate verification is never disabled: a connection that cannot be
+trusted fails, and a notice that failed to send stays outstanding with the reason on it.
+
+The recipient is an environment variable and not a line in this repository because a
+personal address is not repository content, and this repository is public.
+
+**One command runs, not several.** `MYORG_NOTIFY_COMMAND` is a single command, so this
+replaces the GitHub sink rather than joining it. To keep both, point the variable at a script
+of your own that calls each in turn and exits non-zero if either fails — an exit code that
+lies about delivery is worse than no delivery, because the notice is marked done and never
+retried.
+
+**Every kind reaches you.** Blocking first: a step waiting on your decision, an outward call
+proposed and waiting, a call that left and never came back, a run that stopped, a request the
+planner gave up on. Then attention: a run gone quiet, a request retrying too long. Then
+routine: a lesson to keep, and a run that finished. Nothing that needs a person is silent, and
+the same fact is sent once — again only if it changes.
+
 The Prometheus rules in `deploy/prometheus-alerts.yml` are a second channel that watches the
 same conditions from outside — but only if something scrapes `/metrics`.
 
