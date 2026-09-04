@@ -100,6 +100,39 @@ jobs:
       - name: Install exact UI dependencies
         run: npm ci --ignore-scripts
       - name: Reject production dependency advisories
-        run: npm audit --omit=dev --audit-level=moderate
+        # `npm audit` exits 1 for a real advisory and for its own registry being down, so a
+        # 503 at registry.npmjs.org failed the build as though the code were vulnerable.
+        # Retry the blip, then read the report instead of the exit code: advisories fail,
+        # an unreachable endpoint warns and passes. The gate still rejects every
+        # moderate-or-worse advisory it can actually see -- what it must never do is block
+        # every merge because somebody else's service had a bad minute.
+        run: |
+          for attempt in 1 2 3; do
+            report=$(npm audit --omit=dev --json 2>/dev/null || true)
+            printf '%s' "$report" | grep -q '"metadata"' && break
+            echo "::warning::npm audit endpoint unavailable (attempt $attempt of 3)"
+            sleep $((attempt * 20))
+          done
+          printf '%s' "$report" | node -e '
+            let raw = "";
+            process.stdin.on("data", (chunk) => (raw += chunk));
+            process.stdin.on("end", () => {
+              let report;
+              try { report = JSON.parse(raw); } catch { report = null; }
+              const counts = report && report.metadata && report.metadata.vulnerabilities;
+              if (!counts) {
+                console.log("::warning::npm audit was unreachable - production advisories were NOT checked on this run");
+                return;
+              }
+              const blocking = (counts.moderate || 0) + (counts.high || 0) + (counts.critical || 0);
+              if (blocking) {
+                console.error(`${blocking} production advisories at moderate or above: ${JSON.stringify(counts)}`);
+                console.error("run: npm audit --omit=dev");
+                process.exitCode = 1;
+                return;
+              }
+              console.log("no production advisories at moderate or above");
+            });
+          '
       - name: Lint, build, render-test, and validate artifact
         run: npm run lint && npm test && npm run validate:artifact
