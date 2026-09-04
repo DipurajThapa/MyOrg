@@ -375,6 +375,41 @@ class StartQueuedTest(TriggerTestBase):
                     return_value=[SimpleNamespace(run_id=live, state=state)]):
                 self.assertEqual(triggers.in_flight("acme"), [], state)
 
+    def test_withdrawing_a_stuck_request_frees_the_queue_behind_it(self) -> None:
+        """Why a withdrawal had to exist at all.
+
+        A failure that looks temporary deliberately spends none of a request's three
+        attempts -- right for a bad minute, and for a planner that stays unreachable it
+        means the front of the line is never given up. One request starts at a time, so
+        nothing behind it moves either. Before there was a way to withdraw, the whole
+        company sat behind one request and no person could do anything about it.
+        """
+        from runtime.executor import ExecutorError
+        from runtime.planner import StubPlannerBackend
+
+        def overloaded(_request):
+            raise ExecutorError("claude exited 1: result=API Error: 529 Overloaded")
+
+        self.queue("crm:stuck")
+        self.queue("crm:next")
+        for _ in range(5):
+            self.assertEqual(triggers.start_queued(self.store, "acme", overloaded,
+                                                   log=lambda _m: None), [])
+        waiting = self.store.queued_triggers("acme", 10)
+        self.assertEqual([row["source_ref"] for row in waiting], ["crm:stuck", "crm:next"],
+                         "five passes and neither has moved")
+        self.assertEqual(waiting[0]["attempts"], 0,
+                         "a busy server spends nothing, so this never gives up on its own")
+
+        self.store.settle_trigger("acme", waiting[0]["id"], "withdrawn", None,
+                                  "withdrawn by Chief: the planner is down",
+                                  count_attempt=False)
+        started = triggers.start_queued(self.store, "acme", StubPlannerBackend(),
+                                        log=lambda _m: None)
+        self.assertEqual([item["intake_id"] for item in started],
+                         [triggers.intake_id("webhook", "crm:next")],
+                         "the request behind it starts as soon as the line is free")
+
     def test_a_request_that_cannot_start_keeps_its_place_until_its_chances_are_spent(self) -> None:
         """The front of the queue is owed all three of its attempts. Handing its place to a
         newer request on the first bad minute would make the order meaningless exactly when

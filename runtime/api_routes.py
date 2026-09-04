@@ -174,6 +174,13 @@ class RoutesMixin(OperationsRoutesMixin):
                 result = self.server.service.submit_idea(principal, self._json(), self._request_id())
                 self._send(HTTPStatus.ACCEPTED if result["created"] else HTTPStatus.OK, result)
                 return
+            if method == "POST" and len(parts) == 4 and parts[:2] == ["v1", "ideas"]                     and parts[3] == "withdraw":
+                if not RESOURCE_ID_RE.fullmatch(parts[2]):
+                    raise BadRequest("invalid request id")
+                result = self.server.service.withdraw_idea(
+                    principal, parts[2], self._json(), self._request_id())
+                self._send(HTTPStatus.OK, result)
+                return
             if method == "GET" and path == "/v1/ideas":
                 self._send(HTTPStatus.OK, self.server.service.ideas(principal))
                 return

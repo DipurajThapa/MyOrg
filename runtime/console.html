@@ -306,6 +306,14 @@ function renderIdeas(items) {
         (item.attempts ? ` · ${esc(item.attempts)} attempt(s)` : "") +
       `</div>` +
       (item.last_error ? `<div class="note err">${esc(item.last_error)}</div>` : "");
+    // Only while it is still queued. Once intake has started it there is a run, and
+    // stopping that is a different decision made on a different panel.
+    if (item.status === "queued") {
+      actionRow(card, "Why withdraw it? (required, 1–200 characters)", [
+        ["Withdraw", "danger", (reason) =>
+          call("POST", `/v1/ideas/${item.intake_id}/withdraw`, { reason }, "withdraw")],
+      ]);
+    }
     host.appendChild(card);
   }
 }

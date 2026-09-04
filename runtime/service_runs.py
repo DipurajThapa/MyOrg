@@ -147,6 +147,47 @@ class RunsServiceMixin:
         return {"intake_id": row["id"], "run_id": triggers.run_id_for(row),
                 "status": row["status"], "goal": row["goal"], "created": created}
 
+    def withdraw_idea(self, principal: Principal, intake_id: str, body: dict,
+                      request_id: str) -> dict:
+        """Take a queued request out of the line, as a named human, with a stated reason.
+
+        Once a request is a run, `cancel_run` stops it. Before this there was nothing for
+        the step in between: a goal typed by mistake could only leave the queue by the
+        planner spending real money on it three times and giving up.
+
+        The serial queue made that a dead end rather than an annoyance. A failure that
+        looks temporary deliberately spends none of a request's three attempts, so a
+        planner that stays unreachable keeps the front of the line for ever and nothing
+        behind it starts. Withdrawing the head is the only thing that frees the queue.
+
+        `settle_trigger` only matches a row that is still `queued`, so this races the
+        sweeper safely: if intake started the work first, the withdrawal is refused and the
+        run is there to cancel instead. An id from another organization, an id that never
+        existed, and one already settled all answer the same way -- the queue cannot be
+        used to find out what another company asked for.
+        """
+        _require(principal, "decision-owner", "chief-of-staff", "system-admin")
+        if principal.actor_type != "human":
+            raise Forbidden("withdrawing a request requires a registered human identity")
+        if set(body) != {"reason"}:
+            raise ServiceError("a withdrawal takes exactly one field: reason")
+        reason = str(body["reason"]).strip()
+        if not 1 <= len(reason) <= 200 or not reason.isprintable():
+            raise ServiceError("reason must be 1..200 printable characters on one line")
+        if not ID_RE.fullmatch(str(intake_id)):
+            raise ServiceError("invalid request id")
+        from runtime.db import Conflict
+        who = principal.display_name or principal.actor_id
+        try:
+            row = self.store.settle_trigger(
+                principal.org_id, intake_id, "withdrawn", None,
+                f"withdrawn by {who}: {reason}", count_attempt=False)
+        except Conflict as error:
+            raise ServiceError("that request is not waiting in the queue -- it has already "
+                               "started, been withdrawn, or never existed") from error
+        return {"intake_id": row["id"], "status": row["status"], "goal": row["goal"],
+                "withdrawn_by": who}
+
     def ideas(self, principal: Principal) -> list[dict]:
         """Everything asked for that is not yet visible as a run.
 

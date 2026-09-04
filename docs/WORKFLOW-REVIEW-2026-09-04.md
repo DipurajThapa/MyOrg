@@ -164,3 +164,44 @@ replacement test carries the reversal and the evidence for it.
 | ID | Issue | Revisit at |
 |---|---|---|
 | C-3 | **The run records the model's goal, not the person's.** `plan()` forces `workflow["id"]` but not `workflow["goal"]`, so `run.created` stores whatever the model wrote. The Ideas panel shows the operator's words and the Runs list shows the paraphrase — and the human at an approval gate sees the paraphrase, not the request. One line to fix; held for Stage 3, where what a human is shown before approving is the subject. | Stage 3 |
+
+---
+
+## Stage 3 — Execution and the approval gate
+
+**Path.** `advance()` drives every `ready` step (independent steps together, since `ready`
+implies independent) → `request_step` parks yellow at `awaiting_approval` and stops red at
+`blocked_human` → `approvals.pending()` gathers what a person needs → `approve`/`reject`
+through the runtime's own verbs, each writing its audit entry as a side effect of the
+mutation.
+
+**What holds.** A red step is unapprovable by any code path — `approve` refuses anything not
+`awaiting_approval`, and red never reaches that status. Approval requires a reference.
+Waiting for a person never spends an attempt. A cancelled run discards work in flight rather
+than grading it. Org scoping means another company's decision is invisible, not forbidden.
+
+### Fixed
+
+| Issue | Fix |
+|---|---|
+| **The run recorded the model's goal, not the person's.** `plan()` forced `workflow["id"]` but not `workflow["goal"]`, so a paraphrase became the run record, the runs list, and the goal a human reads on the screen where they approve an outward action. The idea typed and the run it became stopped saying the same thing. | One line, for the same reason the id is forced: the caller owns it. |
+| **`waiting_since` was the run's last-event time, not the step's park time.** Steps ready together are driven together, so a run with a gate parked and another branch still working refreshed the gate's own waiting time every pass — and the gauge for "longest anything has waited on a person" reset with it. Mutation check: a gate parked at 10:00 reported 10:05, the moment an unrelated branch moved. | `parked_at()` walks back through the events while the step was still waiting. |
+| **C-1 / C-2: a queued request could not be withdrawn.** With the serial queue this became a dead end rather than an annoyance — a transient failure spends no attempt, so an unreachable planner held the front of the line for ever and nothing behind it started, with nothing a person could do. | Migration 007 adds a `withdrawn` status, plus a service method, a route, and a console button offered only while the request is still queued. |
+
+**Why `withdrawn` is not a reuse of `failed`.** `failed` means the company tried and could
+not, and `escalate_ideas` raises a notice for every failed row — recording a person's own
+withdrawal there would have told them their request "could not be planned". The same status
+list also keeps it off the operator's screen, where it would otherwise sit looking unfinished.
+
+**Every fix was mutation-checked**: the fix is reverted, the test is confirmed to fail, and
+the fix restored. A test that cannot fail is not evidence.
+
+### Known and accepted
+
+- **Rejecting one step ends the whole run.** `reject` sets `run_status="rejected"`, so in a
+  plan with two independent gates, refusing one kills the other branch's finished work. The
+  planner is told to put the gated step last and there is normally one, so this is recorded
+  rather than changed — revisit if multi-gate plans become common.
+- **A withdrawal is recorded in `last_error` ("withdrawn by X: reason") rather than as an
+  operational event.** `settle_trigger` takes no actor, and widening it for this alone was
+  not worth it. The row keeps who and why.

@@ -169,7 +169,7 @@ class TriggersMixin:
         request its whole budget in one outage, and counting a server's bad minute against a
         person's idea is how work gets thrown away for a fault that fixes itself.
         """
-        if status not in {"queued", "started", "failed"}:
+        if status not in {"queued", "started", "failed", "withdrawn"}:
             raise StoreError("trigger status is not a settlement outcome")
         with self.transaction() as connection:
             updated = connection.execute(

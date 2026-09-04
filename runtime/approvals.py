@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from runtime import company_runtime as core  # noqa: E402
 from runtime.briefing import Brief, load_brief  # noqa: E402
-from runtime.executor import (MAX_HANDOFF_CHARS, clip, current_state,  # noqa: E402
-                              namespace, quietly, request_id)
+from runtime.executor import (MAX_HANDOFF_CHARS, clip, namespace,  # noqa: E402
+                              quietly, request_id)
 
 WAITING = core.WAITING_STEP
 RISK_REASON = {
@@ -62,6 +62,23 @@ class Decision:
             # A green step can end up here: the work is fine, the check on it could not run.
             return f"A quality check could not run, so this needs you \u2014 {self.held_reason}"
         return RISK_REASON.get(self.risk, "Held for review.")
+
+
+def parked_at(events: list[dict], step_id: str) -> str:
+    """When this step started waiting -- not when the run last did anything.
+
+    `state["ts"]` is the last event of the whole *run*, so a step parked on Monday reported
+    itself as waiting since whenever some sibling branch last moved. Steps that are ready
+    together are driven together, so a run with a parked gate and other work still going
+    refreshed its own waiting time on every pass, and the gauge for "longest anything has
+    waited on a person" reset with it. Walk back while this step was still waiting.
+    """
+    parked = events[-1]["ts"]
+    for event in reversed(events[:-1]):
+        if event.get("steps", {}).get(step_id, {}).get("status") not in WAITING:
+            break
+        parked = event["ts"]
+    return parked
 
 
 def run_ids() -> list[str]:
@@ -125,9 +142,10 @@ def pending(run_id: str | None = None, org_id: str | None = None) -> list[Decisi
     decisions = []
     for identifier in ([run_id] if run_id else run_ids()):
         try:
-            state = current_state(identifier)
+            events = core.read_events(identifier)
         except SystemExit:
             continue
+        state = events[-1]
         if org_id is not None and state.get("org_id") != org_id:
             continue
         for step_id, step in sorted(state["steps"].items()):
@@ -143,7 +161,7 @@ def pending(run_id: str | None = None, org_id: str | None = None) -> list[Decisi
                 org_id=state.get("org_id", ""),
                 unblocks=downstream_count(state, step_id),
                 depth=depth_of(state, step_id),
-                waiting_since=state.get("ts", "")))
+                waiting_since=parked_at(events, step_id)))
     return sequence(decisions)
 
 

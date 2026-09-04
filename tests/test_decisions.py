@@ -13,6 +13,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import closing
 from pathlib import Path
 
@@ -96,6 +97,55 @@ class DecisionsTest(unittest.TestCase):
             return []
         return [json.loads(line) for line in
                 self.audit_log.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    def park_branch(self, run_id: str) -> str:
+        """A run with a gate and a second branch that keeps working after it parks."""
+        workflow = {"version": 1, "id": f"wf-{run_id}", "goal": f"two branches {run_id}",
+                    "max_cycles": 12,
+                    "steps": [{"id": "gate", "owner": "cmo-marketing", "action": "publish",
+                               "depends_on": [], "max_attempts": 2},
+                              {"id": "other", "owner": "cto-engineering", "action": "draft",
+                               "depends_on": [], "max_attempts": 2}]}
+        path = Path(self._runs.name) / f"{run_id}.wf.json"
+        path.write_text(json.dumps(workflow), encoding="utf-8")
+        self.core.create_run(self.ns(workflow=str(path), run_id=run_id,
+                                     actor="chief-of-staff", request_id=f"create-{run_id}",
+                                     org="acme"))
+        self.core.request_step(self.ns(run_id=run_id, step="gate", actor="cmo-marketing",
+                                       holder="driver-a", request_id=f"req-gate-{run_id}"))
+        return self.core.read_events(run_id)[-1]["ts"]
+
+    def test_parked_at_reads_the_event_the_step_stopped_on(self):
+        """The walk-back on its own: the answer is the first event of the stretch this step
+        has spent waiting, not the newest event that happens to mention it."""
+        def moment(number: int, status: str) -> dict:
+            return {"ts": f"2026-09-04T10:0{number}:00Z", "steps": {"gate": {"status": status}}}
+        events = [moment(0, "ready"), moment(1, "in_progress"), moment(2, "awaiting_approval"),
+                  moment(3, "awaiting_approval"), moment(4, "awaiting_approval")]
+        self.assertEqual(self.approvals.parked_at(events, "gate"), "2026-09-04T10:02:00Z")
+        # A step that parked, was approved, and parked again is waiting since the *second*
+        # time -- the earlier stretch is over and reporting it would age the wait wrongly.
+        events += [moment(5, "in_progress"), moment(6, "awaiting_approval")]
+        self.assertEqual(self.approvals.parked_at(events, "gate"), "2026-09-04T10:06:00Z")
+
+    def test_a_gate_reports_when_it_parked_not_when_the_run_last_moved(self):
+        """`state["ts"]` is the last event of the whole run. Steps that are ready together
+        are driven together, so a run with a gate parked and another branch still working
+        refreshed the gate's own waiting time on every pass -- and the gauge for the
+        longest anything has waited on a person reset along with it."""
+        from runtime import run_state
+        ticks = iter(["2026-09-04T10:00:00Z", "2026-09-04T10:05:00Z", "2026-09-04T10:30:00Z"])
+        with unittest.mock.patch.object(run_state, "now", lambda: next(ticks)):
+            parked = self.park_branch("dec-clock")
+            self.core.request_step(self.ns(run_id="dec-clock", step="other",
+                                           actor="cto-engineering", holder="driver-a",
+                                           request_id="req-other"))
+        latest = self.core.read_events("dec-clock")[-1]["ts"]
+        self.assertNotEqual(parked, latest, "the other branch must have moved the run on")
+        gate = [d for d in self.approvals.pending("dec-clock") if d.step_id == "gate"]
+        self.assertEqual(len(gate), 1)
+        self.assertEqual(gate[0].waiting_since, parked,
+                         "the gate has been waiting since it parked, not since the run moved")
 
     # --- seeing what needs a person ------------------------------------------------
 

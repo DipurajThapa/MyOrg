@@ -223,6 +223,12 @@ def plan(goal: str, workflow_id: str, backend,
             log(f"  attempt {attempt}: {error}")
             continue
         workflow["id"] = workflow_id
+        # And the goal, for the same reason the id is forced: the caller owns it, the model
+        # does not. Whatever it writes here is what `run.created` records, what the runs
+        # list shows, and what a human reads on the screen where they approve an outward
+        # action -- so a paraphrase quietly changes what the operator is told they asked
+        # for, and the idea they typed and the run it became stop saying the same thing.
+        workflow["goal"] = goal
         enforce_budget(workflow)
         feedback = validation_errors(workflow)
         if not feedback:

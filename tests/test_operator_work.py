@@ -136,6 +136,80 @@ class OperatorWork(unittest.TestCase):
                                      {"goal": "A fine goal.", "extra": 1}, "idea-extra")
         self.assertEqual(self.store.queued_triggers("acme", 10), [])
 
+    # --- taking a request back out of the line ---------------------------------
+
+    def test_a_queued_request_can_be_withdrawn_and_leaves_no_alarm_behind(self):
+        """`withdrawn` is not `failed`. The company did not try and fail here, so it must
+        not appear in the abandoned list -- `escalate_ideas` raises a notice for every row
+        there, and telling a person their own withdrawal "could not be planned" is a false
+        alarm about something they did on purpose."""
+        asked = self.service.submit_idea(
+            self.principal(), {"goal": "Draft something I did not mean to ask for."},
+            "idea-oops")
+        result = self.service.withdraw_idea(
+            self.principal(), asked["intake_id"], {"reason": "typed it by mistake"},
+            "wd-oops")
+        self.assertEqual(result["status"], "withdrawn")
+        self.assertEqual(self.store.queued_triggers("acme", 10), [],
+                         "it no longer holds a place in the queue")
+        self.assertEqual(self.service.ideas(self.principal()), [],
+                         "and it leaves the operator's screen")
+        self.assertEqual(self.store.failed_triggers(), [],
+                         "a withdrawal is not a failure and raises no notice")
+
+    def test_a_withdrawal_records_who_and_why_and_spends_no_attempt(self):
+        asked = self.service.submit_idea(
+            self.principal(), {"goal": "Something to change my mind about."}, "idea-why")
+        self.service.withdraw_idea(self.principal(), asked["intake_id"],
+                                   {"reason": "the customer already answered"}, "wd-why")
+        row = self.store.unfinished_triggers("acme", 10)
+        self.assertEqual(row, [], "withdrawn work is not unfinished work")
+        with self.store.reading() as connection:
+            settled = dict(connection.execute(
+                "SELECT * FROM trigger_intake WHERE org_id='acme' AND id=?",
+                (asked["intake_id"],)).fetchone())
+        self.assertEqual(settled["attempts"], 0, "withdrawing is not an attempt")
+        self.assertIn("Owner", settled["last_error"])
+        self.assertIn("the customer already answered", settled["last_error"])
+
+    def test_only_a_human_may_withdraw_and_only_with_a_reason(self):
+        asked = self.service.submit_idea(
+            self.principal(), {"goal": "A request worth protecting."}, "idea-guard")
+        self.store.upsert_actor("acme", "helper", "agent", "Helper", ["chief-of-staff"])
+        with self.assertRaises(Forbidden):
+            self.service.withdraw_idea(self.principal("helper"), asked["intake_id"],
+                                       {"reason": "because I say so"}, "wd-agent")
+        with self.assertRaises(Forbidden):
+            self.service.withdraw_idea(self.principal("looker"), asked["intake_id"],
+                                       {"reason": "just looking"}, "wd-viewer")
+        for body in ({"reason": ""}, {"reason": "x" * 201}, {}, {"reason": "ok", "extra": 1}):
+            with self.assertRaises(ServiceError, msg=str(body)):
+                self.service.withdraw_idea(self.principal(), asked["intake_id"], body,
+                                           "wd-bad")
+        self.assertEqual(len(self.store.queued_triggers("acme", 10)), 1,
+                         "every refusal left the request exactly where it was")
+
+    def test_a_request_that_is_not_waiting_answers_the_same_however_it_is_missing(self):
+        """Another organization's request, one that never existed, and one already settled
+        are one answer. The queue must not be usable to find out what another company
+        asked for, and a second withdrawal of the same row is not a different story."""
+        mine = self.service.submit_idea(self.principal(), {"goal": "My own request here."},
+                                        "idea-mine")
+        theirs = self.service.submit_idea(self.principal(org="other"),
+                                          {"goal": "Another company's request."},
+                                          "idea-theirs")
+        self.service.withdraw_idea(self.principal(), mine["intake_id"],
+                                   {"reason": "changed my mind"}, "wd-mine")
+        refusals = set()
+        for target in (mine["intake_id"], theirs["intake_id"], "tg-does-not-exist"):
+            with self.assertRaises(ServiceError) as refused:
+                self.service.withdraw_idea(self.principal(), target,
+                                           {"reason": "trying it on"}, f"wd-{target[:8]}")
+            refusals.add(str(refused.exception))
+        self.assertEqual(len(refusals), 1, refusals)
+        self.assertEqual(len(self.store.queued_triggers("other", 10)), 1,
+                         "the other organization's request is untouched")
+
     def test_ideas_are_scoped_to_the_organization_that_asked(self):
         self.service.submit_idea(self.principal(), {"goal": "Acme's own work item."}, "idea-acme")
         self.assertEqual(len(self.service.ideas(self.principal())), 1)

@@ -167,6 +167,27 @@ class PlannerTest(unittest.TestCase):
             with self.subTest(workflow=path), open(path, encoding="utf-8") as handle:
                 core.validate_workflow(json.load(handle))
 
+    def test_the_run_records_the_persons_goal_not_the_models_paraphrase(self):
+        """The id is forced because the caller owns it, and the goal is owned the same way.
+
+        Whatever the model writes here becomes the run record, the line in the runs list,
+        and the goal a human reads on the screen where they approve an outward action -- so
+        a paraphrase quietly changes what the operator is told they asked for, and the idea
+        they typed stops matching the run it became.
+        """
+        from runtime.planner import plan
+
+        def paraphrasing(request):
+            written = json.loads(StubPlannerBackend()(request))
+            written["goal"] = "Do some marketing things"
+            written["id"] = "wf-something-the-model-preferred"
+            return json.dumps(written)
+
+        asked = "Email the 3 churn-risk accounts about the March price change."
+        workflow = plan(asked, "wf-asked", paraphrasing, log=lambda _m: None)
+        self.assertEqual(workflow["goal"], asked, "the person's words, not a rewrite")
+        self.assertEqual(workflow["id"], "wf-asked")
+
     def test_a_busy_server_is_not_treated_as_a_badly_written_plan(self):
         """Repair attempts exist to tell the model its JSON was wrong. Feeding a transport
         error back as feedback spent the whole repair budget inside one outage -- three
