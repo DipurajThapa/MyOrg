@@ -1,0 +1,992 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyOrg Work Board</title>
+<style nonce="__NONCE__">
+  /* The console's palette, unchanged: this is the same control centre, laid out as a board. */
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9; --card: #fff; --ink: #14161a; --dim: #5c6470;
+    --line: #e2e5ea; --accent: #1f6feb; --ok: #1a7f4b; --warn: #a1580b; --bad: #b3261e;
+    --chip: #eef1f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #171a20; --ink: #e6e8ec; --dim: #98a0ad;
+      --line: #262b34; --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+      --chip: #21262d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--line); background: var(--card);
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  header .who { color: var(--dim); font-size: 13px; }
+  header .spacer { flex: 1; }
+  a { color: var(--accent); }
+  button {
+    padding: 6px 12px; font: inherit; font-size: 14px; font-weight: 550; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--card); color: var(--ink);
+  }
+  button:hover:not(:disabled) { border-color: var(--dim); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); }
+  button.small { padding: 4px 9px; font-size: 13px; }
+  input[type=text], input[type=search], select, textarea {
+    padding: 6px 10px; font: inherit; font-size: 14px; border: 1px solid var(--line);
+    border-radius: 7px; background: var(--card); color: var(--ink);
+  }
+  textarea { width: 100%; min-height: 64px; resize: vertical; }
+
+  #banner { display: none; padding: 10px 20px; background: var(--bad); color: #fff; font-size: 14px; }
+  #toast {
+    position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 40;
+    max-width: 620px; padding: 10px 16px; border-radius: 8px; font-size: 14px;
+    background: var(--ink); color: var(--bg); display: none; box-shadow: 0 6px 22px #0004;
+  }
+  #toast.bad { background: var(--bad); color: #fff; }
+
+  .filters {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 10px 20px; border-bottom: 1px solid var(--line); background: var(--card);
+  }
+  .filters label { font-size: 13px; color: var(--dim); }
+  .toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .board { display: flex; gap: 12px; padding: 16px 20px 40px; overflow-x: auto; align-items: flex-start; }
+  .col {
+    flex: 0 0 300px; background: var(--chip); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px; max-height: calc(100vh - 190px);
+    display: flex; flex-direction: column;
+  }
+  .col.drop { outline: 2px dashed var(--accent); outline-offset: 2px; }
+  .col > h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim);
+    margin: 2px 2px 8px; font-weight: 650; display: flex; gap: 6px; align-items: baseline;
+  }
+  .col h2 .count {
+    margin-left: auto; background: var(--card); border: 1px solid var(--line);
+    border-radius: 999px; padding: 0 7px; font-size: 11px; letter-spacing: 0;
+  }
+  .col .stack { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+  .col .why { font-size: 12px; color: var(--dim); margin: 0 2px 8px; }
+
+  .item {
+    background: var(--card); border: 1px solid var(--line); border-left-width: 4px;
+    border-radius: 8px; padding: 10px 11px; cursor: pointer; text-align: left; width: 100%;
+    font: inherit; color: inherit; display: block;
+  }
+  .item:hover { border-color: var(--dim); }
+  .item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .item[data-tone="bad"]  { border-left-color: var(--bad); }
+  .item[data-tone="warn"] { border-left-color: var(--warn); }
+  .item[data-tone="ok"]   { border-left-color: var(--ok); }
+  .item[data-tone="live"] { border-left-color: var(--accent); }
+  .item[data-tone="idle"] { border-left-color: var(--line); }
+  .item h3 { margin: 0 0 5px; font-size: 14px; font-weight: 600; line-height: 1.35; }
+  .item .line { font-size: 12px; color: var(--dim); margin-top: 3px; word-break: break-word; }
+  .item .line b { color: var(--ink); font-weight: 600; }
+  .item .fail { color: var(--bad); }
+
+  /* Status is never colour alone: every chip carries a glyph and a word. */
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 999px;
+    background: var(--chip); font-size: 11px; font-weight: 600; border: 1px solid var(--line);
+  }
+  .tag.bad  { color: var(--bad); border-color: var(--bad); }
+  .tag.warn { color: var(--warn); border-color: var(--warn); }
+  .tag.ok   { color: var(--ok); border-color: var(--ok); }
+  .tag.live { color: var(--accent); border-color: var(--accent); }
+  .tag .g { font-family: ui-monospace, Menlo, Consolas, monospace; }
+
+  .drawer {
+    position: fixed; inset: 0 0 0 auto; width: min(680px, 100%); background: var(--card);
+    border-left: 1px solid var(--line); box-shadow: -8px 0 30px #0002; z-index: 30;
+    display: none; flex-direction: column;
+  }
+  .drawer.open { display: flex; }
+  .drawer .head {
+    padding: 14px 18px; border-bottom: 1px solid var(--line);
+    display: flex; gap: 10px; align-items: flex-start;
+  }
+  .drawer .head h2 { margin: 0; font-size: 16px; font-weight: 650; }
+  .drawer .body { padding: 16px 18px 40px; overflow-y: auto; }
+  .drawer section { margin-bottom: 20px; }
+  .drawer section > h3 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--dim); margin: 0 0 8px; font-weight: 650;
+  }
+  .kv { display: grid; grid-template-columns: 145px 1fr; gap: 4px 12px; font-size: 13px; }
+  .kv dt { color: var(--dim); }
+  .kv dd { margin: 0; word-break: break-word; }
+  pre {
+    margin: 0; padding: 9px 11px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 7px; font-size: 12.5px; line-height: 1.45; overflow-x: auto;
+    white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto;
+  }
+  .trail { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  .trail li { padding: 6px 0 6px 14px; border-left: 2px solid var(--line); position: relative; }
+  .trail li::before {
+    content: ""; position: absolute; left: -5px; top: 12px; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--line);
+  }
+  .trail li.mark::before { background: var(--accent); }
+  .trail li.bad::before { background: var(--bad); }
+  .trail .when { color: var(--dim); font-size: 12px; }
+  .act { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .note { font-size: 13px; margin-top: 8px; }
+  .note.err { color: var(--bad); } .note.ok { color: var(--ok); }
+  .empty { color: var(--dim); font-size: 13px; padding: 6px 2px; }
+  .hint { color: var(--dim); font-size: 12.5px; margin: 6px 0; }
+  .scrim { position: fixed; inset: 0; background: #0006; z-index: 25; display: none; }
+  .scrim.open { display: block; }
+</style>
+
+<header>
+  <h1>Work Board</h1>
+  <span class="who" id="who">connecting…</span>
+  <span class="spacer"></span>
+  <a href="/">Console</a>
+  <button id="refresh">Refresh</button>
+</header>
+<div id="banner"></div>
+
+<div class="filters">
+  <input type="search" id="q" placeholder="Search goal, id, owner…" size="26">
+  <label for="fStage">Stage</label>
+  <select id="fStage"><option value="">any</option></select>
+  <label for="fOwner">Owner</label>
+  <select id="fOwner"><option value="">anyone</option></select>
+  <label for="fSince">Changed since</label>
+  <input type="date" id="fSince">
+  <button class="toggle" id="tFailed" aria-pressed="false">Only failed</button>
+  <button class="toggle" id="tWaiting" aria-pressed="false">Only waiting on me</button>
+  <button class="small" id="clear">Clear</button>
+  <span class="spacer"></span>
+  <span class="who" id="tally"></span>
+</div>
+
+<div class="board" id="board"></div>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Item detail"></aside>
+<div id="toast" role="status"></div>
+
+<script nonce="__NONCE__">
+"use strict";
+
+/* The board renders backend state and nothing else. Every column is a real status the
+ * runtime already reports, and every button maps to one documented route. Where an action
+ * a person might reasonably want has no route behind it, the card says so plainly rather
+ * than offering a control that would lie. */
+
+const el = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const API = ["http:", "https:"].includes(location.protocol) ? location.origin : null;
+let token = null;
+let me = { roles: [], actor_type: "", display_name: "" };
+let cards = [];
+let openId = null;
+const inFlight = new Set();          // one submission per action, never two
+const filters = { q: "", stage: "", owner: "", since: "", failed: false, waiting: false };
+
+/* --- columns: the actual stages an item passes through -------------------------------- */
+const COLUMNS = [
+  { key: "asked",    title: "Asked",          why: "Queued. The planner takes the front of the line first." },
+  { key: "planning", title: "Planning",       why: "Being turned into a workflow. No run to see yet." },
+  { key: "working",  title: "Working",        why: "Agents are doing the work." },
+  { key: "waiting",  title: "Waiting on you", why: "Nothing moves here until a person decides." },
+  { key: "done",     title: "Done",           why: "Finished. The output is readable." },
+  { key: "stopped",  title: "Stopped",        why: "Failed, blocked, rejected or cancelled." },
+];
+
+/* Status glyphs so state is never carried by colour alone. */
+const TAG = {
+  queued:   { g: "…", word: "queued",           tone: "idle" },
+  planning: { g: "◐", word: "planning",         tone: "live" },
+  running:  { g: "▶", word: "running",          tone: "live" },
+  waiting:  { g: "⏸", word: "needs you",        tone: "warn" },
+  expired:  { g: "⌛", word: "expired",          tone: "bad"  },
+  done:     { g: "✓", word: "completed",        tone: "ok"   },
+  failed:   { g: "✕", word: "failed",           tone: "bad"  },
+  stopped:  { g: "■", word: "stopped",          tone: "bad"  },
+  proposed: { g: "?", word: "needs a decision", tone: "warn" },
+};
+
+function toast(message, bad) {
+  const node = el("toast");
+  node.textContent = message;
+  node.className = bad ? "bad" : "";
+  node.style.display = "block";
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => (node.style.display = "none"), 5000);
+}
+function banner(message) {
+  const node = el("banner");
+  node.textContent = message || "";
+  node.style.display = message ? "block" : "none";
+}
+
+function requestId(prefix) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function request(method, path, headers, body) {
+  let response;
+  try {
+    response = await fetch(API + path, { method, headers, body });
+  } catch {
+    throw new Error(`Cannot reach the runtime API at ${API}. `
+      + "Is `python -m runtime.api` still running?");
+  }
+  const raw = await response.text();
+  let payload = {};
+  try { payload = raw ? JSON.parse(raw) : {}; } catch { payload = {}; }
+  if (!response.ok) {
+    // The API explains itself in every refusal it authors, so a status with no
+    // explanation did not come from it: something else is answering on this port, or the
+    // runtime was replaced under the page. Say which -- a bare “failed (400)” sends an
+    // operator hunting through their own code for a fault that was never there.
+    const said = payload?.error?.message
+      || (raw.trim()
+          ? `The server said: ${raw.trim().slice(0, 200)}`
+          : "The server sent no explanation, and the runtime always sends one — check "
+            + "that it is still the runtime answering on this port.");
+    const error = new Error(`${method} ${path} — ${response.status}. ${said}`);
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+async function call(method, path, body, prefix) {
+  // Decided once, not per attempt: the retry below has to carry the same request id,
+  // or a write that hit a dead token would land twice.
+  const stamped = body === undefined ? null : (requestId(prefix || "board"));
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  const send = () => {
+    const headers = { "Authorization": `Bearer ${token}` };
+    if (payload !== undefined) {
+      headers["Content-Type"] = "application/json";
+      headers["X-Request-Id"] = stamped;
+    }
+    return request(method, path, headers, payload);
+  };
+  try {
+    return await send();
+  } catch (error) {
+    // A token lives ten minutes and its renewal is on a timer, which a browser is free
+    // to throttle in a background tab. Leaving every panel broken until that timer
+    // catches up is a worse answer than asking for a new token and trying once more.
+    // Once only: a second refusal is a real one.
+    if (error.status !== 401) throw error;
+    await refreshToken();
+    return send();
+  }
+}
+
+async function refreshToken() {
+  const payload = await request("GET", "/v1/console/token", {});
+  token = payload.token;
+  setTimeout(() => refreshToken().catch((error) => banner(error.message)),
+             Math.max(30, payload.expires_in / 2) * 1000);
+}
+
+const can = (...roles) => me.actor_type === "human" && roles.some((r) => me.roles.includes(r));
+const ago = (stamp) => {
+  if (!stamp) return "";
+  const seconds = (Date.now() - Date.parse(stamp)) / 1000;
+  if (!isFinite(seconds)) return stamp;
+  if (seconds < 90) return "just now";
+  const mins = Math.round(seconds / 60);
+  if (mins < 60) return `${mins} min`;
+  const hours = Math.round(mins / 60);
+  return hours < 48 ? `${hours} hours` : `${Math.round(hours / 24)} days`;
+};
+
+/* --- building cards from what the API actually returns --------------------------------- */
+
+function ideaCard(item) {
+  const failed = item.status === "failed";
+  const card = {
+    kind: "idea", id: item.intake_id, title: item.goal,
+    column: failed ? "stopped" : item.status === "queued" ? "asked" : "planning",
+    tag: failed ? TAG.failed : item.status === "queued" ? TAG.queued : TAG.planning,
+    stage: failed ? "Intake — planning gave up" : item.status === "queued"
+      ? "Intake — waiting for the planner" : "Intake — being planned",
+    owner: `${item.source} request`, when: "", whenLabel: "",
+    lines: [`becomes <b>${esc(item.run_id)}</b>`,
+            item.attempts ? `${item.attempts} planning attempt(s)` : ""],
+    reason: failed ? item.last_error : (item.last_error ? `retrying — ${item.last_error}` : ""),
+    recommend: item.next_step || "",
+    raw: item,
+  };
+  if (item.status === "queued") {
+    card.actions = [
+      { label: "Withdraw", cls: "danger", needs: "a reason", drop: "stopped",
+        role: ["decision-owner", "chief-of-staff", "system-admin"],
+        run: (reason) => call("POST", `/v1/ideas/${item.intake_id}/withdraw`, { reason }, "withdraw") },
+      fixAction(item.goal),
+    ];
+  }
+  if (failed) card.actions = [fixAction(item.goal)];
+  return card;
+}
+
+/* The context-aware fix: a request that could not be planned is corrected and asked again.
+ * There is no "edit a queued request" route, so this is genuinely a new request -- the box
+ * says so rather than pretending the old one was repaired. */
+function fixAction(goal) {
+  return {
+    label: "Fix and ask again", cls: "primary", edit: goal,
+    hint: "Correct the wording and ask again. This creates a new request; the original stays "
+        + "on the board for the record.",
+    role: ["decision-owner", "chief-of-staff", "system-admin"],
+    run: (text) => call("POST", "/v1/ideas", { goal: text }, "idea"),
+  };
+}
+
+/** "8 of 12 cycles" says nothing about where the work is. Steps do. */
+function stepLine(item) {
+  if (!item.steps_total) return item.runtime_status ? "" : "no steps — never started";
+  return `<b>${esc(item.steps_done)} of ${esc(item.steps_total)}</b> step(s) finished`;
+}
+
+/** The one step a person needs to look at, named on the card so they need not open it. */
+function blockingLine(item) {
+  const step = item.blocking_step;
+  if (!step) return "";
+  const tries = step.max_attempts
+    ? ` · attempt ${esc(step.attempts)} of ${esc(step.max_attempts)}` : "";
+  const reviews = step.max_review_cycles
+    ? ` · ${esc(step.review_cycles)}/${esc(step.max_review_cycles)} review(s)` : "";
+  return `at <b>${esc(step.step_id)}</b> (${esc(step.owner)}, ${esc(step.status)})${tries}${reviews}`;
+}
+
+function runCard(item, waitingRuns) {
+  const finished = item.runtime_status === "completed";
+  const stopped = !item.can_cancel && !finished;
+  const held = waitingRuns.has(item.id);
+  const card = {
+    kind: "run", id: item.id, title: item.goal,
+    column: finished ? "done" : stopped ? "stopped" : held ? "waiting" : "working",
+    tag: finished ? TAG.done : stopped ? TAG.stopped : held ? TAG.waiting : TAG.running,
+    stage: `Run — ${item.runtime_status || item.status || "status not yet projected"}`,
+    owner: item.created_by === "runtime-projector" ? "" : item.created_by,
+    ownerLabel: "started by", when: item.updated_at, whenLabel: "changed",
+    lines: [stepLine(item), blockingLine(item),
+            `<b>${esc(item.id)}</b> · ${esc(item.cycle_count)}/${esc(item.max_cycles)} cycles`],
+    reason: item.reason || "",
+    recommend: item.next_step || "",
+    blocking: item.blocking_step || null,
+    raw: item,
+  };
+  // Two things create a run row: the runtime, which writes an append-only log, and
+  // `POST /v1/runs`, which records the intent in the store alone. The second has no log, so
+  // its steps, its history and its stop button all have nothing to act on. Saying so beats
+  // three buttons that answer 400.
+  const hasLog = item.steps_total > 0 || Boolean(item.runtime_status);
+  card.actions = [];
+  if (hasLog) {
+    card.detail = { output: `/v1/runs/${item.id}/output`,
+                    history: `/v1/runs/${item.id}/history` };
+  } else {
+    card.blocked = ["This run was recorded through the API but the runtime never started it, "
+                    + "so it has no steps, no history and nothing to stop."];
+  }
+  if (hasLog && item.can_cancel) {
+    card.actions.push({
+      label: "Stop this run", cls: "danger", needs: "a reason", drop: "stopped",
+      role: ["decision-owner"],
+      run: (reason) => call("POST", `/v1/runs/${item.id}/cancel`, { reason }, "cancel"),
+    });
+  }
+  if (stopped && hasLog) {
+    // Deliberate: there is no retry-a-run route, and runs are never deleted -- the log is
+    // the audit record. Saying so beats a button that cannot work.
+    card.blocked = [
+      "There is no retry for a stopped run: the workflow needs changing, not repeating.",
+      "Runs are never deleted. The run log is the audit record of what the company did.",
+    ];
+    card.actions.push(fixAction(item.goal));
+  }
+  return card;
+}
+
+function decisionCard(item) {
+  const card = {
+    kind: "decision", id: `${item.run_id}/${item.step}`, title: item.goal,
+    column: "waiting", tag: TAG.waiting,
+    stage: `${item.workflow_id} — step ${item.step} (${item.action}, ${item.risk})`,
+    owner: item.owner, when: item.waiting_since, whenLabel: "waiting",
+    lines: [`<b>${esc(item.step)}</b> in ${esc(item.run_id)}`, esc(item.impact)],
+    reason: item.held_reason || "",
+    approval: {
+      what: `${item.action} (${item.risk} risk)`,
+      role: "decision-owner", why: item.reason, brief: item.brief,
+      context: item.context, waiting: item.waiting_since,
+    },
+    detail: { history: `/v1/runs/${item.run_id}/history` },
+    raw: item,
+  };
+  if (item.actionable) {
+    card.actions = [
+      { label: "Approve", cls: "primary", needs: "a reason", drop: "working",
+        role: ["decision-owner"],
+        run: (reason) => call("POST", `/v1/decisions/${item.run_id}/${item.step}`,
+                              { decision: "approve", reason }, "decide") },
+      { label: "Reject", cls: "danger", needs: "a reason", drop: "stopped",
+        role: ["decision-owner"],
+        run: (reason) => call("POST", `/v1/decisions/${item.run_id}/${item.step}`,
+                              { decision: "reject", reason }, "decide") },
+    ];
+  } else {
+    // A red step is handed back entirely. No code path can approve it, so none is offered.
+    card.tag = TAG.stopped;
+    card.blocked = ["This is never automated. Do it yourself, outside the system."];
+  }
+  return card;
+}
+
+function approvalCard(item) {
+  return {
+    kind: "approval", id: item.approval_id, title: `${item.action} → ${item.target_ref}`,
+    column: "waiting", tag: item.expired ? TAG.expired : TAG.waiting,
+    stage: "Outward call — waiting for a human",
+    owner: item.requested_by, when: item.requested_at, whenLabel: "asked",
+    lines: [`sends <b>${esc(item.payload_ref)}</b>`, `for run ${esc(item.run_id)}`,
+            `expires ${esc(item.expires_at)}`],
+    reason: item.expired
+      ? "This can no longer be approved. The agent must propose it again." : "",
+    approval: {
+      what: `${item.action} to ${item.target_ref}`, role: "decision-owner",
+      why: "This leaves the building and cannot be undone, so a human decides it.",
+      waiting: item.requested_at,
+      extra: { "Payload reference": item.payload_ref, "Payload SHA-256": item.payload_sha256,
+               "Action hash": item.action_hash, "Expires": item.expires_at },
+    },
+    detail: { history: `/v1/runs/${item.run_id}/history` },
+    actions: item.expired ? [] : [
+      { label: "Approve the send", cls: "primary", needs: "a reason", drop: "working",
+        role: ["decision-owner"],
+        run: (reason) => call("POST", `/v1/approvals/${item.approval_id}/decision`,
+                              { decision: "approve", action_hash: item.action_hash, reason }, "approval") },
+      { label: "Reject", cls: "danger", needs: "a reason", drop: "stopped",
+        role: ["decision-owner"],
+        run: (reason) => call("POST", `/v1/approvals/${item.approval_id}/decision`,
+                              { decision: "reject", action_hash: item.action_hash, reason }, "approval") },
+    ],
+    raw: item,
+  };
+}
+
+function memoryCard(item) {
+  return {
+    kind: "memory", id: item.id, title: item.subject,
+    column: "waiting", tag: TAG.proposed,
+    stage: `Lesson from ${item.source_run || "a review"}`,
+    owner: item.author, when: item.proposed_at, whenLabel: "proposed",
+    lines: [esc(item.body)],
+    detail: item.source_run ? { history: `/v1/runs/${item.source_run}/history` } : undefined,
+    approval: { what: `keep this ${item.kind}`, role: "decision-owner",
+                why: "It changes what every future agent is told.", waiting: item.proposed_at },
+    actions: [
+      { label: "Keep", cls: "primary", needs: "a reason", role: ["decision-owner"],
+        run: (reason) => call("POST", `/v1/memory/${item.id}/decision`,
+                              { decision: "keep", reason }, "memory") },
+      { label: "Discard", cls: "danger", needs: "a reason", role: ["decision-owner"],
+        run: (reason) => call("POST", `/v1/memory/${item.id}/decision`,
+                              { decision: "discard", reason }, "memory") },
+    ],
+    raw: item,
+  };
+}
+
+/* --- filtering ------------------------------------------------------------------------ */
+
+function visible(card) {
+  if (filters.failed && card.column !== "stopped") return false;
+  if (filters.waiting && !(card.column === "waiting" && (card.actions || []).length)) return false;
+  if (filters.stage && card.column !== filters.stage) return false;
+  if (filters.owner && card.owner !== filters.owner) return false;
+  if (filters.since && card.when && card.when.slice(0, 10) < filters.since) return false;
+  if (filters.q) {
+    const hay = `${card.title} ${card.id} ${card.owner} ${card.stage} ${card.reason}`.toLowerCase();
+    if (!hay.includes(filters.q.toLowerCase())) return false;
+  }
+  return true;
+}
+
+/* --- rendering ------------------------------------------------------------------------ */
+
+function render() {
+  const board = el("board");
+  board.textContent = "";
+  const shown = cards.filter(visible);
+  for (const column of COLUMNS) {
+    const mine = shown.filter((card) => card.column === column.key);
+    const node = document.createElement("div");
+    node.className = "col";
+    node.dataset.column = column.key;
+    node.innerHTML = `<h2>${esc(column.title)}<span class="count">${mine.length}</span></h2>`
+                   + `<div class="why">${esc(column.why)}</div>`;
+    const stack = document.createElement("div");
+    stack.className = "stack";
+    if (!mine.length) {
+      stack.innerHTML = '<div class="empty">Nothing here.</div>';
+    }
+    for (const card of mine) stack.appendChild(cardNode(card));
+    node.appendChild(stack);
+    node.addEventListener("dragover", (event) => {
+      if (dragging && legalMove(dragging, column.key)) {
+        event.preventDefault();
+        node.classList.add("drop");
+      }
+    });
+    node.addEventListener("dragleave", () => node.classList.remove("drop"));
+    node.addEventListener("drop", (event) => {
+      event.preventDefault();
+      node.classList.remove("drop");
+      onDrop(column.key);
+    });
+    board.appendChild(node);
+  }
+  el("tally").textContent =
+    `${shown.length} of ${cards.length} item(s)` + (shown.length === cards.length ? "" : " — filtered");
+  refreshSelect("fOwner", [...new Set(cards.map((c) => c.owner).filter(Boolean))].sort());
+  if (openId) {
+    const still = cards.find((card) => cardKey(card) === openId);
+    if (!still) closeDrawer();
+  }
+}
+
+const cardKey = (card) => `${card.kind}:${card.id}`;
+
+function cardNode(card) {
+  const node = document.createElement("button");
+  node.type = "button";
+  node.className = "item";
+  node.dataset.tone = card.tag.tone;
+  node.draggable = (card.actions || []).some((a) => a.drop);
+  node.innerHTML =
+    `<h3>${esc(card.title)}</h3>` +
+    `<div class="line"><span class="tag ${card.tag.tone}">` +
+      `<span class="g" aria-hidden="true">${card.tag.g}</span>${esc(card.tag.word)}</span> ` +
+      `${esc(card.stage)}</div>` +
+    card.lines.filter(Boolean).map((line) => `<div class="line">${line}</div>`).join("") +
+    (card.owner || card.when
+      ? `<div class="line">`
+        + (card.owner ? `${esc(card.ownerLabel || "owner")} <b>${esc(card.owner)}</b>` : "")
+        + (card.owner && card.when ? " · " : "")
+        + (card.when ? `${esc(card.whenLabel)} ${esc(ago(card.when))}` : "")
+        + `</div>`
+      : "") +
+    (card.reason ? `<div class="line fail">${esc(card.reason)}</div>` : "");
+  node.addEventListener("click", () => openDrawer(card));
+  node.addEventListener("dragstart", () => { dragging = card; });
+  node.addEventListener("dragend", () => { dragging = null; });
+  return node;
+}
+
+function refreshSelect(id, values) {
+  const node = el(id);
+  const current = node.value;
+  node.innerHTML = `<option value="">${id === "fOwner" ? "anyone" : "any"}</option>`
+    + values.map((v) => `<option>${esc(v)}</option>`).join("");
+  node.value = current;
+}
+
+/* --- dragging: only where a real backend operation exists ------------------------------ */
+
+let dragging = null;
+
+function legalMove(card, column) {
+  return (card.actions || []).some((action) => action.drop === column);
+}
+
+function onDrop(column) {
+  const card = dragging;
+  dragging = null;
+  if (!card) return;
+  if (card.column === column) return;
+  const action = (card.actions || []).find((a) => a.drop === column);
+  if (!action) {
+    toast(`Nothing moves an item from “${columnTitle(card.column)}” to `
+        + `“${columnTitle(column)}”. The runtime moves work itself; a person can only `
+        + `decide, stop or withdraw.`, true);
+    return;
+  }
+  // Every one of these needs a stated reason, so the drop opens the card with that action
+  // armed rather than firing it blind. Moving a card is never itself the decision.
+  openDrawer(card, action.label);
+  toast(`Give a reason to ${action.label.toLowerCase()}.`);
+}
+
+const columnTitle = (key) => (COLUMNS.find((c) => c.key === key) || {}).title || key;
+
+/* --- the detail drawer ----------------------------------------------------------------- */
+
+function closeDrawer() {
+  openId = null;
+  el("drawer").classList.remove("open");
+  el("scrim").classList.remove("open");
+}
+
+function openDrawer(card, armed) {
+  openId = cardKey(card);
+  const drawer = el("drawer");
+  drawer.classList.add("open");
+  el("scrim").classList.add("open");
+  drawer.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "head";
+  head.innerHTML = `<div><h2>${esc(card.title)}</h2>`
+    + `<div class="line"><span class="tag ${card.tag.tone}">`
+    + `<span class="g" aria-hidden="true">${card.tag.g}</span>${esc(card.tag.word)}</span> `
+    + `${esc(card.stage)}</div></div>`;
+  const close = document.createElement("button");
+  close.textContent = "Close";
+  close.style.marginLeft = "auto";
+  close.addEventListener("click", closeDrawer);
+  head.appendChild(close);
+  drawer.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "body";
+  drawer.appendChild(body);
+
+  body.appendChild(factsSection(card));
+  if (card.approval) body.appendChild(approvalSection(card));
+  if (card.reason || card.blocked || card.blocking) body.appendChild(problemSection(card));
+  if (card.recommend) body.appendChild(adviceSection(card));
+  body.appendChild(actionsSection(card, armed));
+  if (card.detail?.history) body.appendChild(lazySection("Workflow history", card.detail.history, historyView));
+  if (card.detail?.output) body.appendChild(lazySection("Steps, and what each produced", card.detail.output, outputView));
+  if (!card.detail?.history) {
+    const note = document.createElement("section");
+    note.innerHTML = `<h3>Workflow history</h3><div class="empty">`
+      + `${card.kind === "idea"
+          ? "This request has not been planned into a run yet, so there are no steps to show."
+          : "Nothing links this to a run, so there is no step history to show."}</div>`;
+    body.appendChild(note);
+  }
+}
+
+function section(title, inner) {
+  const node = document.createElement("section");
+  node.innerHTML = `<h3>${esc(title)}</h3>${inner}`;
+  return node;
+}
+
+function facts(pairs) {
+  return `<dl class="kv">` + Object.entries(pairs)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("") + `</dl>`;
+}
+
+function factsSection(card) {
+  const raw = card.raw || {};
+  return section("Details", facts({
+    "Identifier": card.id,
+    "Stage": card.stage,
+    "Status": card.tag.word,
+    "Owner": card.owner,
+    [card.whenLabel ? card.whenLabel[0].toUpperCase() + card.whenLabel.slice(1) : "Changed"]:
+      card.when ? `${card.when} — ${ago(card.when)}` : "",
+    "Run": raw.run_id || (card.kind === "run" ? raw.id : ""),
+    "Workflow": raw.workflow_id,
+    "Cycles": raw.max_cycles ? `${raw.cycle_count} of ${raw.max_cycles}` : "",
+    "Attempts": raw.attempts,
+    "Review cycles": raw.review_cycles,
+    "Created": raw.created_at,
+    "Source": raw.source,
+  }));
+}
+
+function approvalSection(card) {
+  const a = card.approval;
+  return section("Approval needed", facts({
+    "What is being approved": a.what,
+    "Who can approve": `anyone with the ${a.role} role` + (can(a.role) ? " — that includes you" : ""),
+    "Waiting": a.waiting ? `${ago(a.waiting)} — since ${a.waiting}` : "",
+    "Why it stopped here": a.why,
+    ...(a.extra || {}),
+  }) + (a.brief ? `<div class="hint">Brief prepared for this decision</div><pre>${esc(a.brief)}</pre>` : "")
+     + (a.context?.length
+        ? `<div class="hint">What earlier steps handed over</div>`
+          + a.context.map((c) => `<div class="hint">${esc(c.step)}</div><pre>${esc(c.excerpt)}</pre>`).join("")
+        : ""));
+}
+
+function problemSection(card) {
+  const parts = [];
+  if (card.reason) parts.push(`<div class="note err">${esc(card.reason)}</div>`);
+  if (card.blocking) {
+    const step = card.blocking;
+    parts.push(`<div class="hint">It is sitting on <b>${esc(step.step_id)}</b>, owned by `
+      + `${esc(step.owner)} — ${esc(step.action)} (${esc(step.risk)}), status `
+      + `${esc(step.status)}, attempt ${esc(step.attempts)} of ${esc(step.max_attempts)}`
+      + (step.max_review_cycles
+          ? `, ${esc(step.review_cycles)} of ${esc(step.max_review_cycles)} review(s)` : "")
+      + `. Open the steps below for what that step was told and what it said back.</div>`);
+  }
+  for (const line of card.blocked || []) parts.push(`<div class="hint">${esc(line)}</div>`);
+  if (!card.reason && !(card.blocked || []).length && !card.blocking) {
+    parts.push(`<div class="empty">No reason was recorded.</div>`);
+  }
+  return section("Why it stopped", parts.join(""));
+}
+
+/** What is left to try. The wording is the runtime's own, shared with the notice it sends,
+ *  so the board and the inbox can never say two different things about the same run. */
+function adviceSection(card) {
+  return section("What to do next", `<div class="hint">${esc(card.recommend)}</div>`);
+}
+
+/* --- actions: valid for this state and this person, and never submitted twice ---------- */
+
+function actionsSection(card, armed) {
+  const node = document.createElement("section");
+  node.innerHTML = `<h3>What you can do</h3>`;
+  const usable = (card.actions || []).filter((a) => !a.role || can(...a.role));
+  const barred = (card.actions || []).filter((a) => a.role && !can(...a.role));
+
+  if (!usable.length && !barred.length) {
+    node.innerHTML += `<div class="empty">Nothing to do here. `
+      + `${card.column === "planning" ? "The planner is working on it." : "The runtime moves this on its own."}`
+      + `</div>`;
+    return node;
+  }
+  for (const action of barred) {
+    node.innerHTML += `<div class="hint">“${esc(action.label)}” needs the `
+      + `${esc((action.role || []).join(" or "))} role. You are signed in as `
+      + `${esc(me.display_name || me.actor_id)}.</div>`;
+  }
+  for (const action of usable) {
+    const row = document.createElement("div");
+    row.className = "act";
+    let input;
+    if (action.edit !== undefined) {
+      input = document.createElement("textarea");
+      input.value = action.edit;
+      input.maxLength = 500;
+      const hint = document.createElement("div");
+      hint.className = "hint";
+      hint.textContent = action.hint || "";
+      node.appendChild(hint);
+      node.appendChild(input);
+    } else if (action.needs) {
+      input = document.createElement("input");
+      input.type = "text";
+      input.maxLength = 200;
+      input.placeholder = `Why? (${action.needs}, 1–200 characters)`;
+      input.style.flex = "1";
+      row.appendChild(input);
+    }
+    const button = document.createElement("button");
+    button.textContent = action.label;
+    if (action.cls) button.className = action.cls;
+    const note = document.createElement("div");
+    note.className = "note";
+    const key = `${cardKey(card)}#${action.label}`;
+    button.addEventListener("click", async () => {
+      const value = input ? input.value.trim() : "";
+      if (input && !value) {
+        note.className = "note err";
+        note.textContent = action.edit !== undefined
+          ? "Say what the company should do." : "A reason is required.";
+        return;
+      }
+      if (inFlight.has(key)) return;             // no double submission
+      inFlight.add(key);
+      button.disabled = true;
+      note.className = "note";
+      note.textContent = "working…";
+      try {
+        const result = await action.run(value);
+        note.className = "note ok";
+        note.textContent = describe(result);
+        await load();                            // the card is redrawn from the backend
+        toast(`${action.label}: done.`);
+      } catch (error) {
+        note.className = "note err";
+        note.textContent = error.message;
+        toast(error.message, true);
+        button.disabled = false;
+      } finally {
+        inFlight.delete(key);
+      }
+    });
+    row.appendChild(button);
+    node.appendChild(row);
+    node.appendChild(note);
+    if (armed === action.label && input) setTimeout(() => input.focus(), 0);
+  }
+  return node;
+}
+
+function describe(result) {
+  if (!result || typeof result !== "object") return "Done.";
+  if (result.status) return `Now: ${result.status}.`;
+  if (result.decision) return `Recorded: ${result.decision}.`;
+  if (result.intake_id) return `Queued as ${result.intake_id}.`;
+  return "Done.";
+}
+
+/* --- lazily loaded history and output --------------------------------------------------- */
+
+function lazySection(title, path, view) {
+  const node = document.createElement("section");
+  node.innerHTML = `<h3>${esc(title)}</h3>`;
+  const button = document.createElement("button");
+  button.className = "small";
+  button.textContent = `Load ${title.toLowerCase()}`;
+  const host = document.createElement("div");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "loading…";
+    try {
+      host.innerHTML = view(await call("GET", path));
+      button.remove();
+    } catch (error) {
+      host.innerHTML = `<div class="note err">${esc(error.message)}</div>`;
+      button.disabled = false;
+      button.textContent = `Load ${title.toLowerCase()}`;
+    }
+  });
+  node.appendChild(button);
+  node.appendChild(host);
+  return node;
+}
+
+function historyView(data) {
+  if (!data.entries?.length) return `<div class="empty">No history recorded.</div>`;
+  const rows = data.entries.map((entry) => {
+    const bad = /fail|blocked|reject|cancel/.test(entry.event + entry.step_status);
+    const mark = /approv|complete/.test(entry.event);
+    const bits = [
+      entry.step ? `<b>${esc(entry.step)}</b>` : "",
+      entry.step_status ? esc(entry.step_status) : "",
+      entry.attempts !== undefined && entry.attempts !== null ? `attempt ${esc(entry.attempts)}` : "",
+      entry.review_cycles ? `${esc(entry.review_cycles)} review(s)` : "",
+      entry.approver ? `by ${esc(entry.approver)}` : "",
+      entry.approval_ref ? `“${esc(entry.approval_ref)}”` : "",
+    ].filter(Boolean).join(" · ");
+    return `<li class="${bad ? "bad" : mark ? "mark" : ""}">`
+      + `<div><b>${esc(entry.event)}</b> ${bits}</div>`
+      + `<div class="when">${esc(entry.at)} · ${esc(entry.actor)} · run ${esc(entry.run_status)}</div>`
+      + (entry.last_failure ? `<pre>${esc(entry.last_failure)}</pre>` : "")
+      + `</li>`;
+  }).join("");
+  return (data.truncated
+      ? `<div class="hint">Showing the most recent ${data.entries.length} of ${data.total_events} events.</div>`
+      : "")
+    + `<ul class="trail">${rows}</ul>`;
+}
+
+function outputView(data) {
+  if (!data.steps?.length) return `<div class="empty">Nothing produced yet.</div>`;
+  return data.steps.map((step) => {
+    const facts = [
+      `${esc(step.owner)} · ${esc(step.action)} (${esc(step.risk)})`,
+      `attempt ${esc(step.attempts)}${step.max_attempts ? ` of ${esc(step.max_attempts)}` : ""}`,
+      step.max_review_cycles
+        ? `${esc(step.review_cycles)} of ${esc(step.max_review_cycles)} review(s)` : "",
+      step.checker ? `checked by ${esc(step.checker)}` : "",
+      step.depends_on?.length ? `waits on ${step.depends_on.map(esc).join(", ")}` : "",
+      step.approver ? `approved by ${esc(step.approver)} — “${esc(step.approval_ref)}”` : "",
+    ].filter(Boolean).join(" · ");
+    // The reason a step produced nothing is the thing an operator actually came for, so it
+    // is shown above the empty output rather than left to be guessed at.
+    const failure = step.last_failure
+      ? `<div class="hint">Last failure, in the checker's or grader's own words:</div>`
+        + `<pre>${esc(step.last_failure)}</pre>`
+      : "";
+    const produced = step.output
+      ? `<pre>${esc(step.output)}</pre>`
+      : `<div class="empty">${step.last_failure
+          ? "Nothing accepted from this step yet." : "Nothing produced yet."}</div>`;
+    return `<div class="hint"><b>${esc(step.step)}</b> — ${esc(step.status)}</div>`
+      + `<div class="hint">${facts}</div>` + failure + produced;
+  }).join("");
+}
+
+/* --- loading --------------------------------------------------------------------------- */
+
+async function load() {
+  try {
+    const [who, ideas, runs, decisions, approvals, proposals] = await Promise.all([
+      call("GET", "/v1/me"), call("GET", "/v1/ideas"), call("GET", "/v1/runs"),
+      call("GET", "/v1/decisions"), call("GET", "/v1/approvals"),
+      call("GET", "/v1/memory/proposals"),
+    ]);
+    me = who;
+    el("who").textContent =
+      `${who.display_name || who.actor_id} · ${who.org_id} · ${(who.roles || []).join(", ") || "no roles"}`;
+    banner("");
+
+    // A run with a step waiting on a person belongs in "Waiting on you", not "Working" --
+    // the decision list is what says so, so the two are reconciled before rendering.
+    const waitingRuns = new Set(decisions.map((d) => d.run_id));
+    cards = [
+      ...ideas.map(ideaCard),
+      ...runs.map((run) => runCard(run, waitingRuns)),
+      ...decisions.map(decisionCard),
+      ...approvals.map(approvalCard),
+      ...proposals.map(memoryCard),
+    ];
+    // A run shown as a decision card must not also sit in Working as a duplicate.
+    cards = cards.filter((card) => !(card.kind === "run" && waitingRuns.has(card.id)));
+    render();
+    if (openId) {
+      const still = cards.find((card) => cardKey(card) === openId);
+      if (still) openDrawer(still);
+    }
+  } catch (error) {
+    banner(error.message);
+    el("board").innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  }
+}
+
+/* --- wiring ---------------------------------------------------------------------------- */
+
+el("refresh").addEventListener("click", () => load());
+el("scrim").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeDrawer(); });
+el("q").addEventListener("input", (e) => { filters.q = e.target.value; render(); });
+el("fStage").addEventListener("change", (e) => { filters.stage = e.target.value; render(); });
+el("fOwner").addEventListener("change", (e) => { filters.owner = e.target.value; render(); });
+el("fSince").addEventListener("change", (e) => { filters.since = e.target.value; render(); });
+for (const [id, key] of [["tFailed", "failed"], ["tWaiting", "waiting"]]) {
+  el(id).addEventListener("click", () => {
+    filters[key] = !filters[key];
+    el(id).setAttribute("aria-pressed", String(filters[key]));
+    render();
+  });
+}
+el("clear").addEventListener("click", () => {
+  Object.assign(filters, { q: "", stage: "", owner: "", since: "", failed: false, waiting: false });
+  el("q").value = ""; el("fStage").value = ""; el("fOwner").value = ""; el("fSince").value = "";
+  el("tFailed").setAttribute("aria-pressed", "false");
+  el("tWaiting").setAttribute("aria-pressed", "false");
+  render();
+});
+el("fStage").innerHTML = `<option value="">any</option>`
+  + COLUMNS.map((c) => `<option value="${c.key}">${esc(c.title)}</option>`).join("");
+
+if (!API) {
+  banner("This page must be opened from the runtime, at http://127.0.0.1:8080/kanban");
+} else {
+  refreshToken().then(load).catch((error) => banner(error.message));
+  setInterval(() => { if (token) load(); }, 15000);
+}
+</script>

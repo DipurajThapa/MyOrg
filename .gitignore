@@ -14,6 +14,7 @@ node_modules/
 **/node_modules/
 .claude/settings.local.json
 probe-runs-*/
+demo-runs-*/
 runtime/runs/*.brief
 runtime/runs/_outbox.jsonl
 runtime/runs/_leases.json

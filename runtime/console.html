@@ -180,9 +180,22 @@ async function request(method, path, headers, body) {
     throw new Error(`Cannot reach the runtime API at ${API}. `
       + "Is `python -m runtime.api` still running?");
   }
-  const payload = await response.json().catch(() => ({}));
+  const raw = await response.text();
+  let payload = {};
+  try { payload = raw ? JSON.parse(raw) : {}; } catch { payload = {}; }
   if (!response.ok) {
-    throw new Error(payload?.error?.message || `${method} ${path} failed (${response.status})`);
+    // The API explains itself in every refusal it authors, so a status with no explanation
+    // did not come from it: something else is answering on this port, or the runtime was
+    // replaced under the page. Say the difference -- "failed (400)" sent an operator
+    // hunting through their own code for a fault that was never there.
+    const said = payload?.error?.message
+      || (raw.trim()
+          ? `The server said: ${raw.trim().slice(0, 200)}`
+          : "The server sent no explanation, which the runtime always does — "
+            + "check that it is still the runtime answering on this port.");
+    const error = new Error(`${method} ${path} — ${response.status}. ${said}`);
+    error.status = response.status;
+    throw error;
   }
   return payload;
 }
@@ -196,13 +209,29 @@ async function refreshToken() {
 }
 
 async function call(method, path, body, prefix, id) {
-  const headers = { "Authorization": `Bearer ${token}` };
-  if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    headers["X-Request-Id"] = id || requestId(prefix || "console");
+  // Decided once, not per attempt: the retry below has to carry the same request id,
+  // or a write that hit a dead token would land twice.
+  const stamped = body === undefined ? null : (id || requestId(prefix || "console"));
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  const send = () => {
+    const headers = { "Authorization": `Bearer ${token}` };
+    if (payload !== undefined) {
+      headers["Content-Type"] = "application/json";
+      headers["X-Request-Id"] = stamped;
+    }
+    return request(method, path, headers, payload);
+  };
+  try {
+    return await send();
+  } catch (error) {
+    // A token lives ten minutes and its renewal is on a timer, which a browser is free
+    // to throttle in a background tab. Leaving every panel broken until that timer
+    // catches up is a worse answer than asking for a new token and trying once more.
+    // Once only: a second refusal is a real one.
+    if (error.status !== 401) throw error;
+    await refreshToken();
+    return send();
   }
-  return request(method, path, headers,
-                 body === undefined ? undefined : JSON.stringify(body));
 }
 
 function chipClass(status) {

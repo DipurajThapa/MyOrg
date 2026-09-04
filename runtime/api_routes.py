@@ -15,7 +15,7 @@ import secrets
 from http import HTTPStatus
 
 from runtime import triggers
-from runtime.api_core import (CONSOLE_PAGE, LOG, RESOURCE_ID_RE, BadRequest, PayloadTooLarge, RouteNotFound,
+from runtime.api_core import (BOARD_PAGE, CONSOLE_PAGE, LOG, RESOURCE_ID_RE, BadRequest, PayloadTooLarge, RouteNotFound,
                               TooManyRequests, UnsupportedMedia, WebhookDenied,
                               WEBHOOK_SECRET_SUFFIX)
 from runtime.api_routes_ops import OperationsRoutesMixin
@@ -52,11 +52,17 @@ class RoutesMixin(OperationsRoutesMixin):
             raise RouteNotFound()
         return actor_id
 
-    def _send_console(self) -> None:
+    def _send_console(self, page_file=CONSOLE_PAGE) -> None:
+        """Serve one local page under the same nonce and the same policy.
+
+        The board is the console's other view, not a second application: same actor, same
+        loopback rule, same short-lived token, same content policy. Passing the file in
+        keeps that true by construction rather than by two copies staying in step.
+        """
         actor_id = self._console_actor()
         self._actor_context = f"console:{actor_id}"
         nonce = secrets.token_urlsafe(16)
-        page = CONSOLE_PAGE.read_text(encoding="utf-8").replace("__NONCE__", nonce)
+        page = page_file.read_text(encoding="utf-8").replace("__NONCE__", nonce)
         self._send_text(HTTPStatus.OK, page.encode("utf-8"), "text/html; charset=utf-8",
                         f"default-src 'none'; script-src 'nonce-{nonce}'; "
                         f"style-src 'nonce-{nonce}'; connect-src 'self'; "
@@ -121,6 +127,9 @@ class RoutesMixin(OperationsRoutesMixin):
             if method == "GET" and path in {"/", "/console"}:
                 self._send_console()
                 return
+            if method == "GET" and path in {"/kanban", "/board"}:
+                self._send_console(BOARD_PAGE)
+                return
             if method == "GET" and path == "/v1/console/token":
                 self._send_console_token()
                 return
@@ -162,6 +171,8 @@ class RoutesMixin(OperationsRoutesMixin):
                     result = self.server.store.run(principal.org_id, run_id)
                 elif parts[3] == "output":
                     result = self.server.service.run_output(principal, run_id)
+                elif parts[3] == "history":
+                    result = self.server.service.run_history(principal, run_id)
                 elif parts[3] == "events":
                     result = self.server.store.run_events(principal.org_id, run_id)
                     for item in result:

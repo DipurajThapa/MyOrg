@@ -86,6 +86,32 @@ class RunsMixin:
             )
             return [{**dict(row), "payload": json.loads(row["payload_json"])} for row in rows]
 
+    def run_step_summary(self, org_id: str) -> dict[str, dict]:
+        """How far each run got, and which step it is sitting on.
+
+        The board needs "3 of 8 done, stuck at market-scan" on the card itself, and asking
+        per run would be one request per card. The projection already holds every step, so
+        this is one query for the whole organization.
+        """
+        with self.reading() as connection:
+            rows = connection.execute(
+                "SELECT run_id, step_id, owner, action, risk, status, attempts, max_attempts, "
+                "review_cycles, max_review_cycles FROM run_steps WHERE org_id=? "
+                "ORDER BY run_id, step_id", (org_id,)).fetchall()
+        summary: dict[str, dict] = {}
+        for row in rows:
+            entry = summary.setdefault(row["run_id"], {"total": 0, "done": 0, "blocking": None})
+            entry["total"] += 1
+            if row["status"] == "completed":
+                entry["done"] += 1
+            # The first step that is neither finished nor merely waiting its turn is the one
+            # a person needs to look at. Ordering is by step id, which is stable.
+            elif entry["blocking"] is None and row["status"] != "pending":
+                entry["blocking"] = {key: row[key] for key in (
+                    "step_id", "owner", "action", "risk", "status",
+                    "attempts", "max_attempts", "review_cycles", "max_review_cycles")}
+        return summary
+
     def create_approval(self, org_id: str, approval_id: str, run_id: str, action: str, action_hash: str,
                         target_ref: str, payload_ref: str, payload_sha256: str, requested_by: str,
                         expires_at: str, request_id: str) -> dict:

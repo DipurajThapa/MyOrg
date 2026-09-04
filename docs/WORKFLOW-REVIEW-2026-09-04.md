@@ -301,3 +301,101 @@ lesson from the same pair must not vanish"*.
 - **`EVIDENCE_DIR` is the repository tree, not `MYORG_RUNS_DIR`.** Already commented in the
   code and in a test's setup; evidence must resolve under the repository root to be accepted
   at all.
+
+---
+
+## The work board
+
+`runtime/kanban.html`, served at `/kanban` (and `/board`) by the same route that serves the
+console — same named actor, same loopback rule, same short-lived token, same content policy.
+It is the console's other view, not a second application.
+
+### Columns are real statuses, not invented ones
+
+| Column | What lands there | Where the status comes from |
+|---|---|---|
+| Asked | a queued request | `GET /v1/ideas`, `status=queued` |
+| Planning | being turned into a workflow | `GET /v1/ideas`, `status=started` |
+| Working | a run the agents are moving | `GET /v1/runs`, `runtime_status=active` |
+| Waiting on you | step gates, outward calls, proposed lessons | `/v1/decisions`, `/v1/approvals`, `/v1/memory/proposals` |
+| Done | a finished run | `GET /v1/runs`, `runtime_status=completed` |
+| Stopped | abandoned requests, blocked/cancelled/rejected runs | `/v1/ideas` `status=failed`; runs where `can_cancel` is false and the run did not complete |
+
+A run whose step is parked appears once, as the decision, not twice.
+
+### Moving a card can never create a state the backend would refuse
+
+Only an action with a real route behind it can be reached by dragging, and each of those
+needs a stated reason — so a drop **arms** the card rather than firing it. Dragging is never
+itself the decision. Anything else is refused in words: *"Nothing moves an item from 'Asked'
+to 'Done'. The runtime moves work itself; a person can only decide, stop or withdraw."*
+
+### What the backend cannot do, said plainly rather than faked
+
+The board offers no control without a route behind it. Where a person would reasonably
+expect one, the card says why there isn't:
+
+| Wanted | Status | What the board does instead |
+|---|---|---|
+| **Retry a stopped run** | No route. `extend-budget` exists as a CLI verb for `blocked_cycle_limit` only and is not exposed over HTTP. | Says *"the workflow needs changing, not repeating"*, and offers **Fix and ask again**, which is a real new request. |
+| **Delete a run** | No route, deliberately — the run log is the audit record. | Says so on the card. Deletion is offered only where it exists: **Withdraw**, on a still-queued request, which is confirmed by a required reason. |
+| **Edit a queued request** | No route. | **Fix and ask again** prefills the wording, and states that it creates a new request while the original stays for the record. |
+| **Name a person who can approve** | No endpoint lists role holders. | Names the required *role*, and whether the signed-in person has it. |
+| **Tell someone a run finished** | No `RUN_COMPLETED` notice exists (raised in Stage 5). | The Done column; nothing is pushed. |
+
+### Added to the backend
+
+One read-only route, because the data existed with nothing exposing it:
+`GET /v1/runs/{id}/history` returns the run's own append-only timeline — every stage change,
+who caused it, when, with attempts, review cycles, approver and stated reason.
+`/v1/runs/{id}/events` reads the *store's* operational events, which are empty for a run the
+executor drove.
+
+### Checked by looking, not only by asserting
+
+Driven against a seeded runtime with work in every column: a step gate approved end to end
+(one `step.approved` event, attributed, with the reason — a deliberate double-click submitted
+once), an illegal drag refused, a legal drag armed but not fired, **Fix and ask again**
+creating a new request while the failed one stayed on the board, and the action buttons
+disappearing with an explanation when the viewer lacks `decision-owner`.
+
+### Answering "why is it stuck", not just "it is stuck"
+
+The first board showed cycles and a generic reason. Cycles say nothing about where the work
+is, and `blocked_retry_limit` is a status, not an explanation. Three additions, all surfacing
+data the backend already held:
+
+| Added | Where it came from |
+|---|---|
+| **Step progress and the blocking step** on `/v1/runs` — *"0 of 3 finished, at frame-goal (chief-of-staff, attempt 2 of 2)"* | `run_steps` in the projection, which already stored every step. One query for the whole org, so no extra request per card. |
+| **`last_failure`** on each step of `/v1/runs/{id}/output`, plus max attempts, review cycles, checker, dependencies and approver | The run state carried the failure text and nothing exposed it — a step that produced nothing showed an empty box and no reason. |
+| **`NEXT_STEP`** in `escalation.py`, beside the existing `DEAD_END` | New, but placed where the notice reads it too, so the board and the inbox cannot tell an operator two different things. Stuck *requests* get the same treatment: a request retrying a busy server is told it needs nothing, which is the opposite advice from one that gave up. |
+
+A stuck run now reads: *"It is sitting on **frame-goal** … attempt 2 of 2"* → *"Every attempt
+failed the same way, so repeating it will not help. Read the step's last failure, then ask
+again with a narrower goal."* → the grader's actual words → every step, with `waits on
+frame-goal` showing what is blocked behind it.
+
+**A product inconsistency this surfaced.** `POST /v1/runs` writes a store row with no runtime
+log, so `/output` and `/history` answer 400 for such a run and there is nothing to stop. The
+board says so and offers no buttons, rather than three that fail.
+
+### When the page cannot reach the runtime
+
+A console left open reported `GET /v1/me failed (400)` and every panel went blank. The cause
+could not be reproduced: token failures answer 401 *with* a message, a query string answers
+400 *with* a message, and a token that outlives a runtime restart answers 200, or 401 with a
+message when the actor is gone. Nothing this API authors returns a bare status. The likeliest
+explanation is that the browser reached port 8080 while the runtime was between restarts.
+
+The cause is unproven; two defects it exposed are not, and both are fixed on the console and
+the board alike:
+
+- **A refusal now repeats what the server actually said.** `failed (400)` sent an operator
+  hunting through their own code for a fault that was never there. A refusal the API authored
+  is quoted; a status with no body says so, and says the runtime always explains itself — so
+  the next person knows to look at what is answering on the port, not at the page.
+- **A dead token recovers instead of stopping the page.** A token lives ten minutes and the
+  renewal is on a timer that a browser may throttle in a background tab. A 401 now fetches a
+  fresh token and retries once — once only, because a second refusal is a real one. The
+  request id is decided before the first attempt, so a retried write cannot land twice.

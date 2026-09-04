@@ -17,6 +17,7 @@ REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 RESOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,63}$")
 LOG = logging.getLogger("myorg.api")
 CONSOLE_PAGE = Path(__file__).with_name("console.html")
+BOARD_PAGE = Path(__file__).with_name("kanban.html")
 
 
 class BadRequest(RuntimeError):

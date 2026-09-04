@@ -16,11 +16,21 @@ class RunsServiceMixin:
         """Every run in this organization, newest change first, with what a person can do
         about it. Read-only; the same audience that may see the decision queue."""
         from runtime import company_runtime as core
-        from runtime.escalation import DEAD_END
+        from runtime.escalation import DEAD_END, NEXT_STEP
         rows = self.store.runs(principal.org_id)
+        summary = self.store.run_step_summary(principal.org_id)
         for row in rows:
             status = row.get("runtime_status")
             row["can_cancel"] = status not in core.TERMINAL_RUN
+            # "8 of 12 cycles" tells nobody where the work is. The steps do, and the
+            # projection already holds them.
+            progress = summary.get(row["id"], {"total": 0, "done": 0, "blocking": None})
+            row["steps_total"] = progress["total"]
+            row["steps_done"] = progress["done"]
+            row["blocking_step"] = progress["blocking"]
+            # And what happened is only half of it: NEXT_STEP is the same wording the
+            # notice uses, so the two cannot tell an operator different things.
+            row["next_step"] = NEXT_STEP.get(status, "") if status in core.TERMINAL_RUN else ""
             # `blocked_retry_limit` is not an explanation. The plain-language reason already
             # exists -- escalation writes it into every notice -- and the page was left
             # showing the status word at exactly the moment something went wrong. One
@@ -197,11 +207,71 @@ class RunsServiceMixin:
         stops an idea from vanishing for minutes between the two lists.
         """
         from runtime import triggers
-        return [{"intake_id": row["id"], "source": row["source"], "goal": row["goal"],
-                 "status": row["status"], "attempts": row["attempts"],
-                 "last_error": row["last_error"],
-                 "run_id": row["run_id"] or triggers.run_id_for(row)}
-                for row in self.store.unfinished_triggers(principal.org_id, 50)]
+        from runtime.backends import is_transient
+        rows = []
+        for row in self.store.unfinished_triggers(principal.org_id, 50):
+            # The same courtesy runs get: say what is left to try. A request retrying on a
+            # busy server and one that has given up look identical on a screen otherwise,
+            # and they need opposite things from a person.
+            if row["status"] == "failed":
+                advice = ("Planning gave up. Read the error, then ask again with a shorter "
+                          "or clearer goal.")
+            elif row["last_error"] and is_transient(row["last_error"]):
+                advice = ("The other end is busy. This retries on its own and spends none of "
+                          "its attempts, so it needs nothing from you -- withdraw it only if "
+                          "you need the queue free for something else.")
+            elif row["last_error"]:
+                advice = (f"Planning failed {row['attempts']} time(s) and will try again. "
+                          "If the error names something you can fix, withdraw it and ask again.")
+            else:
+                advice = ""
+            rows.append({"intake_id": row["id"], "source": row["source"], "goal": row["goal"],
+                         "status": row["status"], "attempts": row["attempts"],
+                         "last_error": row["last_error"], "next_step": advice,
+                         "run_id": row["run_id"] or triggers.run_id_for(row)})
+        return rows
+
+    MAX_HISTORY_EVENTS = 200
+
+    def run_history(self, principal: Principal, run_id: str) -> dict:
+        """What actually happened to this run, in order.
+
+        `GET /v1/runs/{id}/events` reads the store's operational events, which carry service
+        actions like an approval being requested -- and are empty for a run the executor
+        drove, because the run's own history lives in the append-only log instead. That log
+        is the record of every stage change, who caused it and when, and nothing exposed it.
+        Read-only, org-scoped exactly as `run_output` is, and capped: a long run is
+        truncated from the front, because the recent end is the operational one.
+        """
+        from runtime import company_runtime as core
+        self._run_state(principal, run_id)
+        events = core.read_events(run_id)
+        trimmed = events[-self.MAX_HISTORY_EVENTS:]
+        entries = []
+        previous: dict[str, str] = {}
+        for event in trimmed:
+            statuses = {step_id: step["status"]
+                        for step_id, step in event.get("steps", {}).items()}
+            changed = sorted(step_id for step_id, status in statuses.items()
+                             if previous.get(step_id) != status)
+            previous = statuses
+            step = event.get("target", "")
+            detail = event.get("steps", {}).get(step, {})
+            entries.append({
+                "seq": event.get("seq"), "at": event.get("ts", ""),
+                "event": event.get("event", ""), "actor": event.get("actor", ""),
+                "step": step if step in statuses else "",
+                "run_status": event.get("run_status", ""),
+                "step_status": detail.get("status", ""),
+                "attempts": detail.get("attempts"),
+                "review_cycles": detail.get("review_cycles"),
+                "approver": detail.get("approver", ""),
+                "approval_ref": detail.get("approval_ref", ""),
+                "last_failure": (detail.get("last_failure") or "")[:400],
+                "changed": changed,
+            })
+        return {"run_id": run_id, "truncated": len(events) > len(trimmed),
+                "total_events": len(events), "entries": entries}
 
     MAX_EVIDENCE_BYTES = 64 * 1024
 
@@ -214,6 +284,16 @@ class RunsServiceMixin:
             steps.append({"step": step_id, "status": step["status"], "owner": step["owner"],
                           "action": step["action"], "risk": step["risk"],
                           "attempts": step["attempts"], "review_cycles": step["review_cycles"],
+                          # The half that was missing. A step that produced nothing showed an
+                          # empty box; the reason it produced nothing was already sitting in
+                          # the run state and had no way out of it.
+                          "max_attempts": step.get("max_attempts"),
+                          "max_review_cycles": step.get("max_review_cycles", 0),
+                          "checker": step.get("checker") or "",
+                          "depends_on": step.get("depends_on", []),
+                          "approver": step.get("approver", ""),
+                          "approval_ref": step.get("approval_ref", ""),
+                          "last_failure": (step.get("last_failure") or "")[:2000],
                           "output": self._evidence_text(step.get("evidence"))})
         return {"run_id": run_id, "goal": state.get("goal", ""),
                 "status": state["run_status"], "steps": steps}

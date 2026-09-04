@@ -41,6 +41,26 @@ DEAD_END = {
 }
 
 
+# What to do about it, keyed the same way. `DEAD_END` says what happened; this says what is
+# left to try. They sit together because a notice and the board must not diverge -- the board
+# reads these, and so does the notice below.
+NEXT_STEP = {
+    "blocked_retry_limit": "Every attempt failed the same way, so repeating it will not help. "
+                           "Read the step's last failure, then ask again with a narrower goal.",
+    "blocked_review_limit": "The checker kept sending it back. Read its last verdict: the "
+                            "acceptance criteria are usually asking for more than one step can do.",
+    "blocked_cycle_limit": "It ran out of cycle budget. A person can extend it with "
+                           "`python -m runtime.company_runtime extend-budget`; there is no "
+                           "button for this yet.",
+    "rejected": "A person declined this at the gate. Nothing further happens unless it is "
+                "asked for again.",
+    "rejected_by_checker": "The checker refused the work outright. The workflow needs "
+                           "changing, not repeating.",
+    "blocked_human": "This action is never automated. Do it yourself, outside the system.",
+    "cancelled": "Stopped on purpose. Ask again if it is still wanted.",
+}
+
+
 def run_org(run_id: str) -> str:
     from runtime.executor import current_state
     try:
@@ -58,7 +78,8 @@ def escalate_run(run) -> list:
         notice = raise_notice(
             RUN_FAILED, f"{run.run_id} has stopped and cannot continue",
             f"It {reason}. {run.done} of {run.total} steps finished.",
-            "Read the run, then start a new one or change the workflow.",
+            NEXT_STEP.get(run.runtime_status,
+                          "Read the run, then start a new one or change the workflow."),
             org_id=org, run_id=run.run_id)
         if notice:
             raised.append(notice)
