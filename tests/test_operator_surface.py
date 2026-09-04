@@ -31,6 +31,52 @@ class NoticeDeliveryIsDiscoverableTest(unittest.TestCase):
         self.assertIn("## Being told", runbook)
         self.assertIn("_outbox.jsonl", runbook)
 
+    def test_the_console_can_run_as_a_service_and_says_why_it_would_not(self):
+        """The scheduler survives logout and reboot; the API did not, and the API is the
+        only thing here a person can look at. Under `pythonw` there is no console, so a
+        refusal -- a missing secret, a taken port -- exits silently and looks identical to a
+        running server. Every line has to reach a file instead."""
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as area:
+            log = Path(area) / "_api.log"
+            result = subprocess.run(
+                [sys.executable, "-m", "runtime.api"], cwd=ROOT, capture_output=True,
+                text=True, timeout=60,
+                env={**os.environ, "MYORG_API_LOG_FILE": str(log),
+                     "MYORG_AUTH_SECRET": "", "MYORG_PORT": "8123"})
+            self.assertNotEqual(result.returncode, 0, "no secret means no server")
+            self.assertEqual(result.stdout.strip(), "", "nothing may reach a console there is not")
+            self.assertIn("MYORG_AUTH_SECRET is required", log.read_text(encoding="utf-8"))
+            self.assertIn("api starting", log.read_text(encoding="utf-8"))
+
+    def test_no_module_can_report_a_pass_over_a_failing_suite(self):
+        """A module that ran two suites returned only the second's exit status, so a real
+        failure in the first was reported as a pass by the whole run -- and was, once: the
+        budget suite failed while the summary line said PASS. Every command's result has to
+        survive to the module's exit code."""
+        for script in sorted((ROOT / "tests").glob("module-*.sh")):
+            text = script.read_text(encoding="utf-8")
+            runs = [line for line in text.splitlines()
+                    if line.startswith("python3 -m unittest")]
+            if len(runs) < 2:
+                continue
+            for line in runs:
+                self.assertTrue(line.rstrip().endswith("|| rc=1"),
+                                f"{script.name}: '{line}' cannot fail the module")
+            self.assertIn("exit $rc", text, f"{script.name} never reports what it collected")
+
+    def test_the_console_installer_refuses_to_invent_a_secret(self):
+        """A fresh secret on every start invalidates every token already issued, so the
+        installer must not generate one -- and must say how to set a lasting one."""
+        script = (ROOT / "deploy" / "install-console-windows.ps1").read_text(encoding="utf-8")
+        self.assertIn("MYORG_AUTH_SECRET is not set", script)
+        self.assertIn("SetEnvironmentVariable", script)
+        self.assertIn("invalidates every token", script)
+        self.assertIn("MYORG_CONSOLE_ACTOR", script)
+        self.assertIn("RestartCount", script, "it must be restarted like the scheduler")
+        self.assertIn("pythonw.exe", script, "and run without a window")
+
     def test_the_scheduler_help_says_where_notices_go(self):
         from runtime import scheduler
         out = io.StringIO()

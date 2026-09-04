@@ -22,7 +22,17 @@ Overdue invoices, failed/expired card payments, monthly AR review, or before clo
    ghosting, terms mismatch, or our own invoicing error. **The cause picks the play; never dun
    a customer whose invoice we got wrong.**
 3. **Run the dunning ladder** (defaults below — tune per business). Every send is a **DRAFT,
-   🟡 approval-gated**, logged via `audit-log` (`action: dunning.send`, `approval: pending`).
+   🟡 approval-gated**.
+
+   Put the send through the gate -- never write an audit entry yourself, the runtime writes
+   it (`CLAUDE.md` §3):
+
+   ```bash
+   python -m runtime.company_runtime gate <invoice-id>      --owner cfo-finance --action external_send      --summary "<who the reminder goes to, which invoice, how overdue>"      --request-id <invoice-id>
+   ```
+
+   It prints `awaiting_approval` and the reminder waits in the operator's console. It is not
+   sent until a named human approves it there.
 4. **Failed-payment recovery** (involuntary churn): detect expiring/declined cards → draft a
    card-update request (friendly, not a dunning letter) → gated send → track recovery rate.
 5. **Escalate** at the ladder's end: prepare the case file (invoice trail, comms log, amount)
@@ -46,7 +56,8 @@ Overdue invoices, failed/expired card payments, monthly AR review, or before clo
   approval (payment terms are contract changes → CLO/CFO consult).
 - **Verify before dunning:** invoice correct, actually sent, payment not already received.
   Dunning a paid customer costs more goodwill than the invoice is worth.
-- Log every ladder step via `audit-log`; disputed invoices pause the ladder and open a task
+- Every send goes through the gate above; the runtime records it. Disputed invoices
+  pause the ladder and open a task
   contract to the owning department.
 - Account numbers and payment details never appear in drafts, logs, or URLs.
 

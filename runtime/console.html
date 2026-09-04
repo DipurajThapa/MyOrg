@@ -1,0 +1,480 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyOrg Control Center</title>
+<style nonce="__NONCE__">
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9; --card: #fff; --ink: #14161a; --dim: #5c6470;
+    --line: #e2e5ea; --accent: #1f6feb; --ok: #1a7f4b; --warn: #a1580b; --bad: #b3261e;
+    --chip: #eef1f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #171a20; --ink: #e6e8ec; --dim: #98a0ad;
+      --line: #262b34; --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --bad: #f85149;
+      --chip: #21262d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 18px 24px; border-bottom: 1px solid var(--line); background: var(--card);
+  }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+  header .who { color: var(--dim); font-size: 13px; }
+  header .spacer { flex: 1; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 24px 64px; }
+  section { margin-bottom: 34px; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--dim); margin: 0 0 10px; font-weight: 650;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px; margin-bottom: 10px;
+  }
+  .card h3 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+  .meta { color: var(--dim); font-size: 13px; margin-bottom: 10px; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  .body { white-space: pre-wrap; margin: 8px 0 12px; font-size: 14px; }
+  .chip {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    background: var(--chip); font-size: 12px; margin-right: 6px; color: var(--dim);
+  }
+  .chip.running { color: var(--accent); } .chip.completed { color: var(--ok); }
+  .chip.cancelled, .chip.blocked, .chip.failed { color: var(--bad); }
+  .chip.awaiting { color: var(--warn); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input[type=text] {
+    flex: 1; min-width: 200px; padding: 7px 10px; font: inherit; font-size: 14px;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink);
+  }
+  button {
+    padding: 7px 14px; font: inherit; font-size: 14px; font-weight: 550; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink);
+  }
+  button:hover:not(:disabled) { border-color: var(--dim); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); }
+  .empty { color: var(--dim); font-size: 14px; padding: 4px 2px; }
+  textarea {
+    width: 100%; min-height: 76px; resize: vertical; padding: 10px 12px;
+    font: inherit; font-size: 15px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink);
+  }
+  .hint { color: var(--dim); font-size: 13px; margin: 6px 0 10px; }
+  .output { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+  .step { margin-bottom: 12px; }
+  .step .head { font-size: 13px; color: var(--dim); margin-bottom: 4px; }
+  .step .head b { color: var(--ink); font-weight: 600; }
+  pre {
+    margin: 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line);
+    border-radius: 7px; font-size: 13px; line-height: 1.45; overflow-x: auto;
+    white-space: pre-wrap; word-break: break-word; max-height: 340px; overflow-y: auto;
+  }
+  .note { font-size: 13px; margin-top: 8px; }
+  .note.err { color: var(--bad); } .note.ok { color: var(--ok); }
+  #banner {
+    display: none; padding: 12px 24px; background: var(--bad); color: #fff; font-size: 14px;
+  }
+</style>
+
+<header>
+  <h1>MyOrg Control Center</h1>
+  <span class="who" id="who">connecting…</span>
+  <span class="spacer"></span>
+  <button id="refresh">Refresh</button>
+</header>
+<div id="banner"></div>
+
+<main>
+  <section>
+    <h2>Give the company something to do</h2>
+    <div class="card">
+      <textarea id="goal" maxlength="500"
+        placeholder="What should the company do? e.g. Draft a one-page summary of last quarter's support tickets and what they say about the product."></textarea>
+      <div class="hint">
+        One line, 10–500 characters. The planner turns it into a workflow and starts it on the
+        next intake pass (about a minute). Anything outward-facing still stops for your approval.
+      </div>
+      <div class="row">
+        <button id="start" class="primary">Start work</button>
+        <span class="note" id="startNote"></span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Waiting on you</h2>
+    <div id="decisions"><div class="empty">loading…</div></div>
+  </section>
+
+  <section>
+    <h2>Things agents want kept</h2>
+    <div id="memory"><div class="empty">loading…</div></div>
+  </section>
+
+  <section>
+    <h2>Asked for — not showing as a run yet</h2>
+    <div id="ideas"><div class="empty">loading…</div></div>
+  </section>
+
+  <section>
+    <h2>Runs</h2>
+    <div id="runs"><div class="empty">loading…</div></div>
+  </section>
+</main>
+
+<script nonce="__NONCE__">
+"use strict";
+
+let token = null;
+
+const el = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const PANELS = ["decisions", "memory", "ideas", "runs"];
+
+/** Where the API is. This page only works when the API served it: a copy opened from disk
+ *  has no origin to resolve `/v1/...` against, and `fetch` fails with a parser error that
+ *  says nothing about the actual mistake. Deciding it once, here, is what lets the page
+ *  explain itself instead. */
+const API = ["http:", "https:"].includes(location.protocol) ? location.origin : null;
+
+function banner(message) {
+  const node = el("banner");
+  node.textContent = message;
+  node.style.display = message ? "block" : "none";
+}
+
+/** Never leave a panel saying "loading…" — a stuck placeholder reads as a hang. */
+function stall(message) {
+  for (const id of PANELS) {
+    el(id).innerHTML = `<div class="empty">${esc(message)}</div>`;
+  }
+}
+
+/** The API rejects any request id outside this shape, so build one that always fits. */
+function requestId(prefix) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** One fetch, with the two failures that actually happen named in plain words. */
+async function request(method, path, headers, body) {
+  let response;
+  try {
+    response = await fetch(API + path, { method, headers, body });
+  } catch {
+    throw new Error(`Cannot reach the runtime API at ${API}. `
+      + "Is `python -m runtime.api` still running?");
+  }
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || `${method} ${path} failed (${response.status})`);
+  }
+  return payload;
+}
+
+async function refreshToken() {
+  const payload = await request("GET", "/v1/console/token", {});
+  token = payload.token;
+  // Renew at half life so a decision is never refused for a token that died mid-click.
+  setTimeout(() => refreshToken().catch((error) => banner(error.message)),
+             Math.max(30, payload.expires_in / 2) * 1000);
+}
+
+async function call(method, path, body, prefix) {
+  const headers = { "Authorization": `Bearer ${token}` };
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    headers["X-Request-Id"] = requestId(prefix || "console");
+  }
+  return request(method, path, headers,
+                 body === undefined ? undefined : JSON.stringify(body));
+}
+
+function chipClass(status) {
+  const value = String(status || "");
+  if (value.startsWith("awaiting")) return "awaiting";
+  if (value.startsWith("blocked")) return "blocked";
+  return value;
+}
+
+/** One reason box plus its buttons. `actions` is [label, className, handler]. */
+function actionRow(card, placeholder, actions) {
+  const row = document.createElement("div");
+  row.className = "row";
+  const reason = document.createElement("input");
+  reason.type = "text";
+  reason.placeholder = placeholder;
+  reason.maxLength = 200;
+  row.appendChild(reason);
+
+  const note = document.createElement("div");
+  note.className = "note";
+
+  for (const [label, className, handler] of actions) {
+    const button = document.createElement("button");
+    button.textContent = label;
+    if (className) button.className = className;
+    button.addEventListener("click", async () => {
+      const text = reason.value.trim();
+      if (!text) { note.className = "note err"; note.textContent = "A reason is required."; return; }
+      row.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      note.className = "note"; note.textContent = "working…";
+      try {
+        await handler(text);
+        note.className = "note ok"; note.textContent = "done";
+        await load();
+      } catch (error) {
+        note.className = "note err"; note.textContent = error.message;
+        row.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      }
+    });
+    row.appendChild(button);
+  }
+  card.appendChild(row);
+  card.appendChild(note);
+}
+
+async function startWork() {
+  const goal = el("goal").value.trim();
+  const note = el("startNote");
+  const button = el("start");
+  if (goal.length < 10) {
+    note.className = "note err";
+    note.textContent = "Say a little more (10 characters minimum).";
+    return;
+  }
+  button.disabled = true;
+  note.className = "note"; note.textContent = "queueing…";
+  try {
+    const result = await call("POST", "/v1/ideas", { goal }, "idea");
+    el("goal").value = "";
+    note.className = "note ok";
+    note.textContent =
+      `Queued as ${result.intake_id}. It becomes ${result.run_id} on the next intake pass.`;
+    await load();
+  } catch (error) {
+    note.className = "note err"; note.textContent = error.message;
+  }
+  button.disabled = false;
+}
+
+function renderIdeas(items) {
+  const host = el("ideas");
+  host.textContent = "";
+  if (!items.length) {
+    host.innerHTML =
+      '<div class="empty">Nothing waiting — everything asked for is showing under Runs.</div>';
+    return;
+  }
+  // "queued" and "started" are the trigger's words, not an operator's. Say what is being
+  // waited for, because that is the only question this panel exists to answer.
+  const waitingFor = {
+    queued: "waiting for the planner to turn this into a workflow",
+    started: "planned and running — the list of runs catches up at the end of a sweep",
+    failed: "gave up — this never became a run, and nothing is working on it",
+  };
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      `<h3>${esc(item.goal)}</h3>` +
+      `<div class="meta">` +
+        `<span class="chip">${esc(item.status)}</span>` +
+        `${esc(waitingFor[item.status] || item.status)}` +
+      `</div>` +
+      `<div class="meta">from ${esc(item.source)} · becomes <b>${esc(item.run_id)}</b>` +
+        (item.attempts ? ` · ${esc(item.attempts)} attempt(s)` : "") +
+      `</div>` +
+      (item.last_error ? `<div class="note err">${esc(item.last_error)}</div>` : "");
+    host.appendChild(card);
+  }
+}
+
+/** Fetch a run's evidence on demand -- runs are many and their output is large. */
+async function toggleOutput(runId, card, button) {
+  const existing = card.querySelector(".output");
+  if (existing) { existing.remove(); button.textContent = "Show output"; return; }
+  button.disabled = true;
+  button.textContent = "loading…";
+  try {
+    const result = await call("GET", `/v1/runs/${runId}/output`);
+    const box = document.createElement("div");
+    box.className = "output";
+    for (const step of result.steps) {
+      const block = document.createElement("div");
+      block.className = "step";
+      const head = document.createElement("div");
+      head.className = "head";
+      head.innerHTML = `<b>${esc(step.step)}</b> — ${esc(step.status)} · ` +
+        `${esc(step.owner)} · ${esc(step.action)} · ${esc(step.risk)}`;
+      block.appendChild(head);
+      const pre = document.createElement("pre");
+      pre.textContent = step.output || "(no output recorded for this step)";
+      block.appendChild(pre);
+      box.appendChild(block);
+    }
+    card.appendChild(box);
+    button.textContent = "Hide output";
+  } catch (error) {
+    button.textContent = "Show output";
+    const note = document.createElement("div");
+    note.className = "note err";
+    note.textContent = error.message;
+    card.appendChild(note);
+  }
+  button.disabled = false;
+}
+
+function renderDecisions(items) {
+  const host = el("decisions");
+  host.textContent = "";
+  if (!items.length) {
+    host.innerHTML = '<div class="empty">Nothing is waiting on you.</div>';
+    return;
+  }
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      `<h3>${esc(item.action || item.step)}</h3>` +
+      `<div class="meta">` +
+        `<span class="chip ${chipClass(item.status)}">${esc(item.status)}</span>` +
+        `<span class="chip">${esc(item.risk || "risk unknown")}</span>` +
+        `run <b>${esc(item.run_id)}</b> · step <b>${esc(item.step)}</b> · ` +
+        `owner ${esc(item.owner || "unassigned")} · waiting since ${esc(item.waiting_since || "?")}` +
+      `</div>` +
+      (item.goal ? `<div class="meta">Goal: ${esc(item.goal)}</div>` : "") +
+      (item.brief ? `<div class="body">${esc(item.brief)}</div>`
+                  : (item.impact ? `<div class="body">${esc(item.impact)}</div>` : ""));
+
+    actionRow(card, "Why? (required, 1–200 characters)", [
+      ["Approve", "primary", (reason) =>
+        call("POST", `/v1/decisions/${item.run_id}/${item.step}`,
+             { decision: "approve", reason }, "approve")],
+      ["Reject", "danger", (reason) =>
+        call("POST", `/v1/decisions/${item.run_id}/${item.step}`,
+             { decision: "reject", reason }, "reject")],
+    ]);
+    host.appendChild(card);
+  }
+}
+
+function renderMemory(items) {
+  const host = el("memory");
+  host.textContent = "";
+  if (!items.length) {
+    host.innerHTML = '<div class="empty">No proposals.</div>';
+    return;
+  }
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      `<h3>${esc(item.subject)}</h3>` +
+      `<div class="meta"><span class="chip">${esc(item.kind)}</span>` +
+      `proposed by ${esc(item.author)} · ${esc(item.proposed_at)}` +
+      (item.source_run ? ` · from run <b>${esc(item.source_run)}</b>` : "") + `</div>` +
+      `<div class="body">${esc(item.body)}</div>`;
+
+    actionRow(card, "Why? (required, 1–200 characters)", [
+      ["Keep", "primary", (reason) =>
+        call("POST", `/v1/memory/${item.id}/decision`, { decision: "keep", reason }, "keep")],
+      ["Discard", "danger", (reason) =>
+        call("POST", `/v1/memory/${item.id}/decision`, { decision: "discard", reason }, "discard")],
+    ]);
+    host.appendChild(card);
+  }
+}
+
+function renderRuns(items) {
+  const host = el("runs");
+  host.textContent = "";
+  if (!items.length) {
+    host.innerHTML = '<div class="empty">No runs yet.</div>';
+    return;
+  }
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      `<h3>${esc(item.id)}</h3>` +
+      `<div class="meta">` +
+        `<span class="chip ${chipClass(item.runtime_status || item.status)}">` +
+        `${esc(item.runtime_status || item.status)}</span>` +
+        `${esc(item.workflow_id)} · cycle ${esc(item.cycle_count)}/${esc(item.max_cycles)} · ` +
+        `updated ${esc(item.updated_at)}` +
+      `</div>` +
+      (item.reason ? `<div class="meta">It ${esc(item.reason)}.</div>` : "") +
+      (item.goal ? `<div class="body">${esc(item.goal)}</div>` : "");
+
+    const show = document.createElement("button");
+    show.textContent = "Show output";
+    show.addEventListener("click", () => toggleOutput(item.id, card, show));
+    const bar = document.createElement("div");
+    bar.className = "row";
+    bar.appendChild(show);
+    card.appendChild(bar);
+
+    if (item.can_cancel) {
+      actionRow(card, "Why stop it? (required, 1–200 characters)", [
+        ["Stop this run", "danger", (reason) =>
+          call("POST", `/v1/runs/${item.id}/cancel`, { reason }, "cancel")],
+      ]);
+    }
+    host.appendChild(card);
+  }
+}
+
+async function load() {
+  try {
+    const [me, decisions, proposals, runs, ideas] = await Promise.all([
+      call("GET", "/v1/me"), call("GET", "/v1/decisions"),
+      call("GET", "/v1/memory/proposals"), call("GET", "/v1/runs"),
+      call("GET", "/v1/ideas"),
+    ]);
+    el("who").textContent =
+      `${me.display_name || me.actor_id} · ${me.org_id} · ${me.roles.join(", ")}`;
+    renderDecisions(decisions);
+    renderMemory(proposals);
+    renderIdeas(ideas);
+    renderRuns(runs);
+    banner("");
+  } catch (error) {
+    banner(error.message);
+    stall("Could not load — see the message above.");
+  }
+}
+
+el("refresh").addEventListener("click", load);
+el("start").addEventListener("click", startWork);
+
+function start() {
+  if (!API) {
+    // A saved copy of this file, opened from disk. Nothing here can work, and the browser's
+    // own error names a URL parser rather than the mistake, so say the mistake.
+    el("who").textContent = "not signed in";
+    el("start").disabled = true;
+    banner("This page must be opened from the runtime, not from a saved file. "
+           + "Start it with `python -m runtime.api` and open http://127.0.0.1:8080/");
+    stall("Open http://127.0.0.1:8080/ to use the console.");
+    return;
+  }
+  refreshToken().then(load).catch((error) => {
+    el("who").textContent = "not signed in";
+    banner(error.message);
+    stall("Not signed in — see the message above.");
+  });
+}
+
+start();
+</script>

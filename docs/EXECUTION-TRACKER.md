@@ -136,6 +136,7 @@ Compact table, then a detail block for every row that is active or next.
 | **B-03** | `suspended` means the tenant is off — for the autonomous paths too | **Done 2026-09-03** (re-verified same day) — intake skips, sweep drives nothing, `advance` halts before its next dispatch, agent API offers/claims nothing, webhook refuses, tokens were already refused; in-flight step finishes and records itself; gauge + 6 h alert; 7 tests | — | — | — |
 | **B-05a** | Total spend is alerted on | **Done 2026-09-03** — `MyOrgTotalSpendHigh` at $25 placeholder | — | NOTIFY-01 (to be heard) | Re-threshold after a week of data |
 | **B-09** | One authoritative approval surface | **Done 2026-09-03 (finished, 0.6.0)** — `GET /v1/memory/proposals` + `POST /v1/memory/{id}/decision` (decision-owner, human, org-scoped, reason recorded on the entry); Control Center queue shows "Things agents want kept" with Keep/Discard; `approval_server.py`, its tests and `MYORG_LOCAL_STEP_DECISIONS` deleted; 7 tests, one of which fails if the console ever comes back. A-07 written as `operating-principles.md` §9 | — | — | — |
+| **B-10** | The audit note about *who* approved is true on the authenticated path | **Done 2026-09-03** — `attribution()` is keyed by **actor id**, but `decide_step`, `cancel_run` and `decide_memory` all passed `principal.display_name`, so the API — signed token, role check, human check — wrote *"approved by 'Dipuraj Thapa' (not a registered actor in this organization)"* while the CLI, where the name really is self-asserted, was the path that could write "a registered active human". Backwards, on the product's core claim. **Chosen: option 1** — `attribution(state, approver, actor_id=None)` looks up `actor_id or approver` and still *prints* `approver`. Verified identity and human-readable record stay separate, so `cancelled_by`/`approver` keep display names (`tests/test_cancel.py:123,304` depend on that) and no stored value changes. Options 2 (resolve by id *or* name) and 3 (store the id) were rejected: 2 adds a Store query and lets a display-name collision impersonate an id; 3 makes every human record read `chief` instead of `Chief Operator`. `cancel_run`'s note now runs through the same function (it asserted nothing before). `decide_memory` is untouched — `memory.decide` records a name and never claims registration. 1 test | — | — | Passing an unverified name into `attribution` still reads as unverified — keep it that way if a third caller appears |
 | **A-07** | Document `decide_step` vs `decide_approval` | **Done 2026-09-03** — `company/operating-principles.md` §9: the three human decisions (step / connector approval / memory), what each acts on, what "yes" does, and that none implies another | — | — | — |
 | **B-08** | External-worker admission gate | **Deferred** — documented (§6 item B-08): three decisions owed, not one | P2 | first external worker | Decide all three before admitting a worker; do not build before |
 | **B-06** | A sweep pass cannot be held indefinitely by one run | **Deferred** | P2 | B-03 (same function) | None until head-of-line blocking is observed |
@@ -187,6 +188,49 @@ Compact table, then a detail block for every row that is active or next.
   documentation is folded in.
 
 ---
+
+## 4b. Cycle 4 — found by using the product (2026-09-03/04)
+
+Every row below came from operating the thing, not from reading it: an operator opened the
+console, typed a goal, and watched what happened. Evidence is the live run id.
+
+### Closed
+
+| ID | What was wrong | Fixed |
+|---|---|---|
+| C-01 | The console existed in no front-door document, and `bootstrap` never mentioned it | README section, bootstrap epilogue |
+| C-02 | The API died with its terminal; only the scheduler was supervised | `deploy/install-console-windows.ps1`, `MYORG_API_LOG_FILE` |
+| C-03 | A saved copy of the page failed with a URL-parser error and left three panels at "loading…" | origin check, `stall()`, named errors |
+| C-04 | `decision-owner` could not submit work; `operator` was not a legal trigger source | role added, migration 006 |
+| C-05 | A queued idea vanished between "started" and the read model | `unfinished_triggers` |
+| C-06 | `claude exited 1:` with nothing after the colon — stderr reported, diagnosis on stdout | `cli_failure`, envelope fields, teardown noise last |
+| C-07 | A 529 destroyed a request: repair budget spent on transport errors, then counted permanent | `is_transient`, `count_attempt=False`, `release-step` |
+| C-08 | A release rewound `attempts`, so the next claim replayed the previous one — a run spun 40 passes | releases counted in `request_id` |
+| C-09 | Rejections truncated at 200 chars — and that text is the *next attempt's* feedback | `MAX_REASON_CHARS = 2000` |
+| C-10 | A failed idea disappeared from every screen and raised nothing | `idea_failed`, `idea_stuck`, stays listed |
+| C-11 | The planner wrote criteria nobody could satisfy ("every claim carries a dated source link") | planner rules: who can search, bound the count, no absolutes |
+| C-12 | Approval spent an attempt; the cap held on one path of three | `approve` does not increment; cap moved to `request_step` |
+| C-13 | Planner budgeted `reviews + 1`, leaving nothing for a grader rejection | `reviews + 2` floor in the prompt; validator unchanged deliberately |
+| C-14 | Approving a budget stop submitted the budget notice as the deliverable | `held_kind`; budget approval returns the step to `ready` and grants a ceiling |
+| C-15 | Every cost stop was written to the audit log as a quality-gate failure | note follows `held_kind` |
+
+### Open, in priority order
+
+| ID | Gap | Why it matters | Size |
+|---|---|---|---|
+| **C-16** | **16 of 17 departments never touch the runtime** (1 agent, 1 skill reference it; none call `runtime/audit.py`). Every fix above protects runtime runs only | This is the product's core promise. A department asked for work in a chat session has no gate, no audit, no ceiling, no cancel | Large — needs the layer decision from the 2026-09-03 review |
+| **C-17** | `audit-log` skill instructs agents to append entries by hand, contradicting `CLAUDE.md` §3 ("a side effect of the gate, never something an agent chooses to write") | Two documents disagree about the accountability rule. Today the skill wins | Small, but blocked on C-16's decision |
+| **C-18** | Two run engines: `POST /v1/runs` writes the DB `events` chain; cancel/decide read the file log; `GET /v1/runs` reads the projection. `events` holds 0 rows against 14 runs | Same shape as B-01 and B-09, both resolved by deleting one side. Third instance, still unresolved | Medium |
+| **C-19** | Fabricated citations: the grader cannot verify a URL, so a confident invention passes | Prompting raised the bar (`shows it was retrieved`); only recording the worker's real `WebSearch` calls closes it | Medium |
+| **C-20** | A run card shows `blocked_retry_limit` and nothing else. `escalation.DEAD_END` already has the plain-language reason and the page does not use it | The operator is left holding jargon at exactly the moment something went wrong | Small |
+| **C-21** | Spend is invisible in the console until a run parks on the ceiling | A run that will stop for budget should say so before it does | Small |
+| **C-22** | A failed idea's notice says "reword it and ask again", which means retyping it | A *Try again* button reusing the stored goal is the obvious next action | Small |
+| **C-23** | A step released for a transient failure retries forever with no notice; `idea_stuck` covers ideas, not steps | Same silence C-10 fixed, one layer down | Small |
+| NOTIFY-01 | Unchanged: sender and reader are the same GitHub account, so no notification arrives | Every alert above is still only an inbox | Blocked on a second identity |
+
+**The honest summary.** Cycle 4 made the *runtime* trustworthy under real load. It did not touch
+the gap that decides whether the product does what its README says: C-16. Until a department's
+work runs through the runtime, "every step logged" describes one of seventeen departments.
 
 ## 5. Immediate implementation / validation specifications
 

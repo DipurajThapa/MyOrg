@@ -10,6 +10,10 @@ import json
 import subprocess
 from pathlib import Path
 
+# The one list of tools that reach outward, so the provenance record and the
+# grant it comes from can never disagree about what a search is.
+from runtime.tools import NETWORK_TOOLS  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 STEP_TIMEOUT_SECONDS = 300
 
@@ -42,10 +46,15 @@ class Output(str):
     runs were driven at once. This breaks in neither direction.
     """
     cost_usd: float = 0.0
+    # What the agent actually retrieved, taken from the CLI's own tool-call record rather
+    # than from anything the agent said about its research. A model asked what it searched
+    # answers from memory; this is the execution log.
+    retrieved: tuple = ()
 
-    def __new__(cls, text: str, cost_usd: float = 0.0):
+    def __new__(cls, text: str, cost_usd: float = 0.0, retrieved: tuple = ()):
         value = super().__new__(cls, text)
         value.cost_usd = float(cost_usd)
+        value.retrieved = tuple(retrieved)
         return value
 
 
@@ -72,6 +81,133 @@ class StubBackend:
                   f"{request.agent}. " * 6 + "\n")
 
 
+# Failures that say "the other end is busy", not "your request is wrong". They are the one
+# class where trying the identical thing later is the correct response -- so they must never
+# be spent as repair attempts or counted against a permanent give-up cap.
+TRANSIENT_MARKERS = (
+    "529", "overloaded", "503", "service unavailable", "502", "bad gateway",
+    "504", "gateway timeout", "429", "rate limit", "timed out", "timeout",
+    "connection reset", "connection refused", "temporarily",
+)
+
+
+# Noise the CLI emits while shutting down, which is not why the dispatch failed. A session
+# ending abruptly -- as it does the moment a model call errors -- cancels whatever hooks the
+# operator's plugins registered, and those cancellations land on stderr. Reported first, as
+# they were, they bury the real cause: an operator was told a plugin's SessionEnd hook had
+# failed when the actual answer, further down the same message, was "529 Overloaded".
+TEARDOWN_MARKERS = ("hook cancelled", "hook canceled", "sessionend hook", "session_end hook")
+
+
+def is_teardown_noise(message: str) -> bool:
+    """Whether a line is a side effect of the session ending rather than a cause of it."""
+    lowered = message.lower()
+    return any(marker in lowered for marker in TEARDOWN_MARKERS)
+
+
+def is_transient(message: str) -> bool:
+    """Whether a failure is the other end being busy rather than the request being wrong.
+
+    A real 529 cost an operator their request: `plan()` fed the transport error back to the
+    model as if it were malformed-JSON feedback, burning all three repair attempts inside one
+    outage, and `start_queued` then counted that as a permanent attempt. Nine calls into an
+    overloaded server, then the idea was thrown away -- for a fault that fixes itself.
+    """
+    return any(marker in message.lower() for marker in TRANSIENT_MARKERS)
+
+
+def cli_failure(stdout: str, stderr: str, limit: int = 400) -> str:
+    """Why the `claude` CLI exited non-zero, in words an operator can act on.
+
+    Two things make this harder than reading stderr. First, with `--output-format json` the
+    CLI's own failures go to *stdout* and stderr comes back empty -- reporting stderr alone
+    produced `claude exited 1:` with nothing after the colon, which is how a planner failure
+    became undiagnosable. Second, that JSON envelope leads with timings and token counts and
+    puts `result`, `subtype` and `is_error` at the *end*, so slicing the first few hundred
+    characters keeps the noise and drops the diagnosis. Pick the fields out instead, and only
+    fall back to raw text when there is no envelope to read.
+    """
+    stdout, stderr = stdout.strip(), stderr.strip()
+    parts = []
+    try:
+        envelope = json.loads(stdout)
+    except (json.JSONDecodeError, ValueError):
+        envelope = None
+    if isinstance(envelope, dict):
+        for key in ("error", "result", "subtype", "stop_reason", "type"):
+            value = envelope.get(key)
+            if isinstance(value, dict):
+                value = value.get("message") or json.dumps(value)
+            if value not in (None, "", []):
+                parts.append(f"{key}={str(value)[:limit]}")
+        usage = envelope.get("usage") or {}
+        if usage.get("input_tokens") == 0 and usage.get("output_tokens") == 0:
+            # Nothing was sent and nothing came back: the CLI stopped before the model,
+            # so look at the invocation -- flags, prompt size, session state -- not the model.
+            parts.append("no tokens were used, so the CLI stopped before calling the model")
+    elif stdout:
+        parts.append(f"stdout={stdout[:limit]}")
+    if stderr:
+        # Shutdown noise goes last and is labelled as such; anything else on stderr is a
+        # real cause and leads. Putting all of stderr first was what let a cancelled plugin
+        # hook headline a failure whose actual reason was an overloaded API.
+        if is_teardown_noise(stderr) and parts:
+            parts.append(f"(also, while shutting down: {stderr[:limit]})")
+        else:
+            parts.insert(0, f"stderr={stderr[:limit]}")
+    return " | ".join(parts) or "no output on either stream"
+
+
+def unpack_stream(raw: str) -> tuple[str, float, tuple]:
+    """The deliverable, its cost, and every search the agent actually ran.
+
+    `--output-format stream-json` emits one JSON object per line: assistant messages whose
+    content blocks include `tool_use`, the matching `tool_result`, and a final `result`.
+    Reading the searches from here rather than from the deliverable is the whole point --
+    a citation is eligible because a tool call fetched it, not because the text claims so.
+
+    A line that will not parse is skipped rather than fatal: the record is evidence for the
+    grader, and losing one line must not lose a finished step's work.
+    """
+    text, cost, calls, results = "", 0.0, {}, []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if event.get("type") == "result":
+            text = str(event.get("result") or text)
+            cost = float(event.get("total_cost_usd") or cost)
+        for block in (event.get("message") or {}).get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use" and block.get("name") in NETWORK_TOOLS:
+                calls[block.get("id")] = str((block.get("input") or {}).get("query", ""))[:200]
+            elif block.get("type") == "tool_result" and block.get("tool_use_id") in calls:
+                # Keep the query and a bounded slice of what came back. The URLs a grader
+                # needs to check a citation against are in here; the rest is not worth
+                # carrying into another prompt.
+                results.append({"query": calls.pop(block["tool_use_id"]),
+                                "returned": _result_text(block)[:2000]})
+    # A search that never returned still happened, and its absence of results is itself
+    # evidence -- a citation attributed to it is not eligible.
+    results.extend({"query": query, "returned": ""} for query in calls.values())
+    return text, cost, tuple(results)
+
+
+def _result_text(block: dict) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(str(part.get("text", "")) for part in content
+                        if isinstance(part, dict))
+    return ""
+
+
 class ClaudeCliBackend:
     """Dispatches a step to the owning agent through the local `claude` CLI.
 
@@ -90,9 +226,13 @@ class ClaudeCliBackend:
         # prompt nobody is there to answer.
         room = getattr(request, "workspace", None)
         grant = getattr(request, "grant", None)
-        # JSON rather than text, only so the CLI's own `total_cost_usd` comes back with the
-        # answer. Nothing can count what a step spends by inspecting its prose.
-        command = ["claude", "-p", request.prompt(), "--output-format", "json",
+        # A stream when the agent can reach outward, plain JSON otherwise. The stream is
+        # the only place the CLI reports the tool calls it actually made, and those calls
+        # are the evidence a citation is real: a model asked what it searched will answer
+        # from memory. Nothing else needs the extra parsing, so nothing else pays for it.
+        searching = bool(grant) and any(name in NETWORK_TOOLS for name in grant.tools)
+        fmt = ["--output-format", "stream-json", "--verbose"] if searching else               ["--output-format", "json"]
+        command = ["claude", "-p", request.prompt(), *fmt,
                    "--append-system-prompt", request.brief,
                    "--permission-mode", "dontAsk", *DISPATCH_PROFILE]
         if grant and room:
@@ -109,7 +249,8 @@ class ClaudeCliBackend:
         except subprocess.TimeoutExpired as error:
             raise ExecutorError(f"step timed out after {self.timeout}s") from error
         if result.returncode != 0:
-            raise ExecutorError(f"claude exited {result.returncode}: {result.stderr.strip()[:400]}")
+            raise ExecutorError(f"claude exited {result.returncode}: "
+                                f"{cli_failure(result.stdout, result.stderr)}")
         output, cost = self._unpack(result.stdout)
         if not output:
             raise ExecutorError("agent returned no output")

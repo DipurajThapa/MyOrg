@@ -125,7 +125,11 @@ class MemoryDecisionTest(unittest.TestCase):
                                        {"decision": "keep", "reason": "x"}, "r")
 
     def test_the_route_exists_and_the_old_console_does_not(self):
-        source = (ROOT / "runtime" / "api.py").read_text(encoding="utf-8")
+        # Every file the HTTP boundary is split across, so moving a route between them
+        # cannot quietly turn this guard off -- it is the route existing that matters here,
+        # not which file holds it.
+        source = "".join(path.read_text(encoding="utf-8")
+                         for path in sorted((ROOT / "runtime").glob("api*.py")))
         self.assertIn('"/v1/memory/proposals"', source)
         self.assertIn('["v1", "memory"]', source)
         self.assertFalse((ROOT / "runtime" / "approval_server.py").exists(),

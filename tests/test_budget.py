@@ -152,6 +152,68 @@ class CeilingTest(BudgetTestBase):
         self.assertIn("$0.60", reason)
         self.assertIn("$0.50", reason)
 
+    def test_the_audit_log_says_which_decision_is_being_asked_for(self) -> None:
+        """The note was hardcoded to the quality wording, so every cost stop was recorded as
+        a broken gate. An auditor reading the log would look for a quality problem that
+        never existed -- in the one record the whole design rests on."""
+        os.environ["MYORG_RUN_CEILING_USD"] = "0.50"
+        self.make_run("bud-audit", steps=2)
+        self.executor.advance("bud-audit", CostingBackend(0.60), log=self.logs.append)
+        entries = [json.loads(line) for line
+                   in Path(os.environ["MYORG_AUDIT_LOG"]).read_text(encoding="utf-8").splitlines()
+                   if line.strip()]
+        held = [e for e in entries if e.get("outcome") == "awaiting-approval"]
+        self.assertTrue(held, "the stop must be on the record at all")
+        self.assertIn("cost ceiling", held[-1]["note"])
+        self.assertNotIn("quality gate", held[-1]["note"])
+
+    def test_approving_a_budget_stop_buys_the_work_rather_than_accepting_it(self) -> None:
+        """A step parked on the ceiling was never dispatched, so its "evidence" is the
+        budget notice the runtime wrote. Completing with that handed a checker a receipt to
+        certify as research -- a live checker refused twice and the review limit ended the
+        run. Approval must send the step back to be *done*, not finish it."""
+        os.environ["MYORG_RUN_CEILING_USD"] = "0.50"
+        self.make_run("bud-buys", steps=2)
+        backend = CostingBackend(0.60)
+        self.executor.advance("bud-buys", backend, log=self.logs.append)
+        held = self.state("bud-buys")["steps"]["s2"]
+        self.assertEqual(held["status"], "awaiting_approval")
+        self.assertEqual(held["held_kind"], "budget")
+
+        self.executor.quietly(self.core.approve, self.ns(
+            run_id="bud-buys", step="s2", approver="dipuraj",
+            approval_ref="worth paying for", request_id="bud-buys-1"))
+        step = self.state("bud-buys")["steps"]["s2"]
+        self.assertEqual(step["status"], "ready", "it must be done, not completed")
+        self.assertEqual(step["held_evidence"], "",
+                         "the notice must not survive to be submitted as a deliverable")
+
+        # And the run keeps going on the same ceiling, instead of parking on every step.
+        self.executor.advance("bud-buys", backend, log=self.logs.append)
+        final = self.state("bud-buys")["steps"]["s2"]
+        self.assertEqual(final["status"], "completed")
+        self.assertGreater(backend.calls, 1, "the work itself must have been dispatched")
+
+    def test_a_hold_for_a_broken_control_still_accepts_the_work_it_kept(self) -> None:
+        """The other half: when a gate could not run there *is* a deliverable, and approving
+        it must still complete the step without redoing the work."""
+        self.make_run("bud-ungraded", steps=1)
+        self.executor.quietly(self.core.request_step, self.ns(
+            run_id="bud-ungraded", step="s1", actor="cmo-marketing",
+            holder="driver", request_id="ug-claim"))
+        proof = self.executor.write_evidence("bud-ungraded", "s1", "the real deliverable")
+        self.executor.quietly(self.core.hold, self.ns(
+            run_id="bud-ungraded", step="s1", actor="cmo-marketing", evidence=proof,
+            reason="grader unavailable", claim_token=None, spend=0.0, request_id="ug-hold"))
+        self.assertEqual(self.state("bud-ungraded")["steps"]["s1"]["held_kind"], "ungraded")
+        self.executor.quietly(self.core.approve, self.ns(
+            run_id="bud-ungraded", step="s1", approver="dipuraj",
+            approval_ref="read it myself", request_id="ug-approve"))
+        step = self.state("bud-ungraded")["steps"]["s1"]
+        self.assertEqual(step["status"], "in_progress")
+        self.assertEqual(step["held_evidence"].replace("\\", "/"), proof.replace("\\", "/"),
+                         "the work it kept is still there")
+
     def test_approving_the_parked_step_lets_the_run_continue(self) -> None:
         """The ceiling reuses `hold`, so it inherits VAL-07's resume path -- which is why
         the cost budget needed no extension command of its own."""

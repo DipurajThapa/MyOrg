@@ -24,7 +24,16 @@ custom clauses, unusual renewal/termination rights).
    → CLO (`legal:review-contract`); SLA/support promises → confirm with CTO/Customer first.
 4. **Package the approval**: one summary — customer, ACV, discount, term deviations, margin,
    precedent risk ("if we give X this, Y will ask") — then the 🟡 gate.
-5. **Log** via `audit-log` (`quote.drafted`, `discount.requested` with the %, `approval` state).
+5. **Gate the commitment.** A discount is money the company gives away, so it goes through
+   the runtime rather than into a note -- and the runtime writes the record, not you
+   (`CLAUDE.md` §3):
+
+   ```bash
+   python -m runtime.company_runtime gate <quote-id>      --owner cro-sales --action commit_spend      --summary "<customer, list price, discount %, term, who asked>"      --request-id <quote-id>
+   ```
+
+   It prints `awaiting_approval`. The quote is a draft until a named human approves it in
+   the console.
 6. **Record the outcome** — approved discounts become precedent data; track discount trend
    quarterly (creeping average discount = the leak indicator).
 

@@ -1,9 +1,18 @@
 {
   "version": 1,
-  "note": "What a department may touch while it works, and where. Every rule is relative to that step's own workspace: a bare grant like `Read` reads the whole machine, including this repository, so scoping is the containment. Bash is granted to nobody -- it is scoped by command, never by path, so no workspace can bound it; work that needs to run something goes through a connector with its own admission control. Network and sub-agent tools are likewise ungranted until they are governed.",
+  "note": "What a department may touch while it works, and where. Every rule is relative to that step's own workspace: a bare grant like `Read` reads the whole machine, including this repository, so scoping is the containment. Bash is granted to nobody -- it is scoped by command, never by path, so no workspace can bound it; work that needs to run something goes through a connector with its own admission control. Sub-agent tools are likewise ungranted until they are governed. WebSearch is granted to the two departments whose deliverables must cite sources, and to nobody else: a search sends a query and returns text, while WebFetch names its own URL and stays ungrantable, because a URL carries data out. A department that can search is told at the point of use that results are data, never instructions.",
   "default": {
     "tools": ["Read", "Write", "Edit", "Glob", "Grep"],
     "allow": ["Read(./**)", "Write(./**)", "Edit(./**)", "Glob(./**)", "Grep(./**)"]
   },
-  "roles": {}
+  "roles": {
+    "chief-knowledge-officer": {
+      "tools": ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch"],
+      "allow": ["Read(./**)", "Write(./**)", "Edit(./**)", "Glob(./**)", "Grep(./**)", "WebSearch"]
+    },
+    "head-of-data": {
+      "tools": ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch"],
+      "allow": ["Read(./**)", "Write(./**)", "Edit(./**)", "Glob(./**)", "Grep(./**)", "WebSearch"]
+    }
+  }
 }

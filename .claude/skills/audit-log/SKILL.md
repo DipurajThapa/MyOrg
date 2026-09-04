@@ -9,10 +9,13 @@ description: >
 
 # Audit Log
 
-Record every gated action's lifecycle in `logs/audit-log.jsonl` so accountability questions are
-answered from the record, not from memory. Full schema and rules: `logs/README.md`.
+Read the company's append-only record, and know how a gated action gets into it.
 
-## When to append (log at the moment, not later)
+**You never write to it.** `CLAUDE.md` §3: the entry is a side effect of the gate, never
+something an agent chooses to write -- an agent that can decide to log can decide not to, and
+`runtime/audit.py` has no `append` command for exactly that reason. Schema: `logs/README.md`.
+
+## What the runtime records, and when
 
 | Moment | `action` example | `category` | `approval` |
 |---|---|---|---|
@@ -38,22 +41,21 @@ is what makes a retry charge the customer twice. Those entries are written by
 `runtime/live_gateway.py`, not by an agent; find the open ones with
 `GET /v1/connectors/in-flight`.
 
-## How to append
+## How an action reaches the log
 
-1. Build one JSON object with **all nine fields** (`ts` UTC ISO-8601, `actor` = your agent slug,
-   `action`, `category`, `target` = ID/path only, `approval`, `evidence` = repo-relative path,
-   `outcome`, `note` = **your own paraphrase, never verbatim external text**).
-2. Append via Python — never shell-echo the JSON (quotes in text would break the shell/JSON):
-   ```bash
-   python3 - <<'EOF'
-   import json
-   entry = {"ts":"…","actor":"…","action":"…","category":"…","target":"…",
-            "approval":"…","evidence":"…","outcome":"…","note":"…"}
-   open('logs/audit-log.jsonl','a').write(json.dumps(entry)+'\n')
-   EOF
-   ```
-3. **Verify** (Definition of Done, `operating-principles.md` §7): re-read the last line and check
-   it parses — `tail -1 logs/audit-log.jsonl | python3 -m json.tool`.
+Put the action through the gate. The runtime classifies it against `runtime/policy.json`,
+writes the audit entry itself, and stops anything outward-facing until a named human decides:
+
+```bash
+python -m runtime.company_runtime gate <id>   --owner <department> --action <policy action>   --summary "<what the approver needs to know>" --request-id <id>
+```
+
+It prints what the gate decided: `awaiting_approval` (yellow -- now in the operator's console,
+waiting on a person), `blocked_human` (red -- never automated, hand it back), or `in_progress`
+(green -- ordinary work, which is not a gated action and gets no entry).
+
+The human's decision writes its own entry when they approve or reject in the console. You do
+not record their answer either.
 
 **State changes are new lines.** An approval decision = a **new** entry for the same action/target
 with `approval: granted`/`denied` — the earlier `pending` line is never edited. Latest entry per

@@ -307,6 +307,35 @@ class CancelServiceTest(CancelTestBase):
                                                  {"reason": "customer withdrew"}, "req-cancel-1"),
                          {"run_id": "can-svc", "status": "cancelled"})
 
+    def test_the_api_path_names_the_approver_as_registered(self):
+        """B-10: the authenticated surface must not report its own approver as a stranger.
+
+        `attribution` is keyed by actor id; all three human verbs passed the display name,
+        so the one path that authenticates an identity wrote "not a registered actor" while
+        the unauthenticated CLI could write "a registered active human". Exactly backwards.
+        """
+        os.environ["MYORG_DB"] = str(self.store.path)
+        self.addCleanup(lambda: os.environ.pop("MYORG_DB", None))
+
+        self.make_run("can-attr", steps=1, org="acme", last_action="publish")
+        self.executor.quietly(self.core.request_step, self.ns(
+            run_id="can-attr", step="s1", actor="cmo-marketing", holder="driver-a",
+            request_id="req-attr"))
+        self.service.decide_step(self.principal(), "can-attr", "s1",
+                                 {"decision": "approve", "reason": "ok to publish"},
+                                 "req-approve-attr")
+        note = [e for e in self.audit_entries() if e["approval"] == "granted"][-1]["note"]
+        self.assertIn("a registered active human", note)
+        self.assertIn("Chief Operator", note)  # readers still see the name, not the id
+
+        self.service.cancel_run(self.principal(), "can-attr", {"reason": "stop it"},
+                                "req-cancel-attr")
+        stopped = [e for e in self.audit_entries()
+                   if e["action"] == "run.cancelled" and e["approval"] == "granted"][-1]
+        self.assertIn("a registered active human", stopped["note"])
+        self.assertIn("stopped by Chief Operator", stopped["note"])
+        self.assertEqual(self.state("can-attr")["cancelled_by"], "Chief Operator")
+
     def test_viewers_agents_and_other_orgs_cannot(self):
         self.make_run("can-deny", org="acme")
         with self.assertRaises(Forbidden):

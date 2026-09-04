@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""The gauges that watch the company, as opposed to the web server in front of it.
+
+Every value here comes from the store behind a short cache, because these are scraped
+every few seconds and a gauge costing a full table scan is how a metrics endpoint takes
+the database down.
+"""
+from __future__ import annotations
+
+import threading
+import json
+import logging
+import time
+from collections import defaultdict
+from datetime import datetime, timezone
+
+
+
+
+RUN_STATES = ("running", "waiting on you", "stalled", "finished", "failed")
+SEVERITIES = ("blocking", "attention", "routine")
+SNAPSHOT_TTL_SECONDS = 15.0
+# "Nothing is authorized" is a real state, and not the same as "expiring now". A zero here
+# would fire the expiry alert on every install that has no connectors.
+NO_AUTHORIZATION_EXPIRY = 31_536_000.0  # a year away, i.e. nothing to worry about
+
+
+def _age_seconds(stamp: str | None, now: datetime) -> float:
+    """How long ago, in seconds, never negative and never an exception."""
+    if not stamp:
+        return 0.0
+    try:
+        moment = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return 0.0
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return max(0.0, (now - moment).total_seconds())
+
+
+class RuntimeGauges:
+    """The autonomous half, sampled on demand.
+
+    Collecting means reading every run log, so the result is cached for one scrape
+    interval -- a metrics endpoint that gets slower as the company gets busier is a
+    metrics endpoint people turn off.
+
+    Nothing here may raise. A missing runs directory, an absent store and a half-written
+    log are all ordinary states, not failures. But a collector that failed *silently*
+    would recreate the exact gap OBS-08 exists to close, so failures are counted and
+    exported: `myorg_runtime_snapshot_ok 0` is itself an alertable signal.
+    """
+
+    def __init__(self, store=None, ttl_seconds: float = SNAPSHOT_TTL_SECONDS):
+        self.store = store
+        self.ttl_seconds = ttl_seconds
+        self._lock = threading.Lock()
+        self._cached: dict | None = None
+        self._cached_at = 0.0
+        self._errors = 0
+
+    # --- collection ---------------------------------------------------------------
+
+    def _runs(self, sample: dict, now: datetime) -> None:
+        from runtime.health import all_health
+        counts = dict.fromkeys(RUN_STATES, 0)
+        cancelled = 0
+        for run in all_health(now):
+            counts[run.state] = counts.get(run.state, 0) + 1
+            cancelled += run.runtime_status == "cancelled"
+        sample["runs"] = counts
+        # Cancelled runs read as "failed" above. They are counted on their own because each
+        # one under-reports its cost by the dispatch it interrupted (B-02): this is the
+        # number to watch before deciding whether that accounting gap matters.
+        sample["runs_cancelled"] = cancelled
+
+    def _approvals(self, sample: dict, now: datetime) -> None:
+        from runtime import approvals
+        pending = approvals.pending()
+        sample["approvals_waiting"] = len(pending)
+        sample["approval_wait_seconds_max"] = max(
+            (_age_seconds(item.waiting_since, now) for item in pending), default=0.0)
+
+    def _notices(self, sample: dict, now: datetime) -> None:
+        from runtime import notify
+        counts = dict.fromkeys(SEVERITIES, 0)
+        for notice in notify.outstanding():
+            counts[notice.severity] = counts.get(notice.severity, 0) + 1
+        sample["notices"] = counts
+
+    def _triggers(self, sample: dict, now: datetime) -> None:
+        if self.store is None:
+            return
+        depth, oldest = self.store.trigger_queue_summary()
+        sample["trigger_queue_depth"] = depth
+        sample["trigger_queue_oldest_seconds"] = _age_seconds(oldest, now)
+
+    def _receipts(self, sample: dict, now: datetime) -> None:
+        if self.store is None:
+            return
+        count, oldest = self.store.in_flight_receipt_summary()
+        sample["receipts_in_flight"] = count
+        sample["receipt_unsettled_seconds_max"] = _age_seconds(oldest, now)
+
+    def _spend(self, sample: dict, now: datetime) -> None:
+        """What the runs on this host have cost, and the worst single offender.
+
+        Read from the run log, which is where spend is recorded, so this reports the same
+        figure the ceiling reads rather than a second opinion about it.
+        """
+        from runtime.executor import current_state
+        from runtime import company_runtime as core
+        total, worst = 0.0, 0.0
+        for path in core.run_files():
+            try:
+                spent = float(current_state(path.stem).get("spend_usd", 0.0) or 0.0)
+            except Exception:  # noqa: BLE001 - one unreadable run must not blind the rest
+                continue
+            total += spent
+            worst = max(worst, spent)
+        sample["spend_usd_total"] = round(total, 4)
+        sample["spend_usd_worst_run"] = round(worst, 4)
+
+    def _suspension(self, sample: dict, now: datetime) -> None:
+        """1 while this host's organization is suspended. A pause that nobody can see is
+        indistinguishable from a healthy quiet company, which is the failure OBS-08 exists
+        to prevent -- so the pause is a gauge and an alert, not just a row."""
+        if self.store is None:
+            return
+        import os
+        org = os.environ.get("MYORG_ORG_ID", "default")
+        sample["org_suspended"] = int(self.store.organization_status(org) == "suspended")
+
+    def _authorizations(self, sample: dict, now: datetime) -> None:
+        """Seconds until the first enabled connector loses its authorization.
+
+        Negative once it has passed. `NO_AUTHORIZATION_EXPIRY` when nothing is authorized,
+        which is a real state and not the same as "expiring now" -- a zero here would fire
+        the alert on every install that has no connectors.
+        """
+        if self.store is None:
+            return
+        soonest = self.store.soonest_authorization_expiry()
+        if soonest:
+            moment = datetime.fromisoformat(soonest.replace("Z", "+00:00"))
+            sample["authorization_expires_seconds"] = (moment - now).total_seconds()
+
+    def collect(self, now: datetime | None = None) -> dict:
+        """One sample. Each source is isolated: a broken one costs its own numbers, not
+        the whole endpoint."""
+        moment = now or datetime.now(timezone.utc)
+        started = time.monotonic()
+        sample: dict = {"runs": dict.fromkeys(RUN_STATES, 0),
+                        "notices": dict.fromkeys(SEVERITIES, 0),
+                        "approvals_waiting": 0, "approval_wait_seconds_max": 0.0,
+                        "trigger_queue_depth": 0, "trigger_queue_oldest_seconds": 0.0,
+                        "receipts_in_flight": 0, "receipt_unsettled_seconds_max": 0.0,
+                        "authorization_expires_seconds": NO_AUTHORIZATION_EXPIRY,
+                        "spend_usd_total": 0.0, "spend_usd_worst_run": 0.0,
+                        "org_suspended": 0, "runs_cancelled": 0, "ok": 1}
+        for source in (self._runs, self._approvals, self._notices, self._triggers,
+                       self._receipts, self._authorizations, self._spend, self._suspension):
+            try:
+                source(sample, moment)
+            except Exception:  # noqa: BLE001 - a scrape must never take the server down
+                sample["ok"] = 0
+                self._errors += 1
+        sample["duration_seconds"] = time.monotonic() - started
+        sample["errors_total"] = self._errors
+        return sample
+
+    def sample(self, now: datetime | None = None) -> dict:
+        with self._lock:
+            fresh = self._cached is not None and (time.monotonic() - self._cached_at) < self.ttl_seconds
+            if fresh and now is None:
+                return dict(self._cached)  # type: ignore[arg-type]
+        collected = self.collect(now)
+        with self._lock:
+            self._cached, self._cached_at = collected, time.monotonic()
+        return collected
+
+    # --- rendering ----------------------------------------------------------------
+
+    def render(self, now: datetime | None = None) -> bytes:
+        sample = self.sample(now)
+        lines = [
+            "# HELP myorg_runs Runs by health state.",
+            "# TYPE myorg_runs gauge",
+        ]
+        for state in RUN_STATES:
+            lines.append(f'myorg_runs{{state="{state.replace(" ", "_")}"}} {sample["runs"].get(state, 0)}')
+        lines.extend((
+            "# HELP myorg_runs_cancelled Runs a person stopped; each under-reports cost by one dispatch.",
+            "# TYPE myorg_runs_cancelled gauge",
+            f'myorg_runs_cancelled {sample["runs_cancelled"]}',
+            "# HELP myorg_approvals_waiting Steps parked for a human decision.",
+            "# TYPE myorg_approvals_waiting gauge",
+            f'myorg_approvals_waiting {sample["approvals_waiting"]}',
+            "# HELP myorg_approval_wait_seconds_max Age of the longest-waiting decision.",
+            "# TYPE myorg_approval_wait_seconds_max gauge",
+            f'myorg_approval_wait_seconds_max {sample["approval_wait_seconds_max"]:.1f}',
+            "# HELP myorg_notices_outstanding Undelivered notices by severity.",
+            "# TYPE myorg_notices_outstanding gauge",
+        ))
+        for severity in SEVERITIES:
+            lines.append(f'myorg_notices_outstanding{{severity="{severity}"}} '
+                         f'{sample["notices"].get(severity, 0)}')
+        lines.extend((
+            "# HELP myorg_trigger_queue_depth Triggered work waiting to become runs.",
+            "# TYPE myorg_trigger_queue_depth gauge",
+            f'myorg_trigger_queue_depth {sample["trigger_queue_depth"]}',
+            "# HELP myorg_trigger_queue_oldest_seconds Age of the oldest queued trigger.",
+            "# TYPE myorg_trigger_queue_oldest_seconds gauge",
+            f'myorg_trigger_queue_oldest_seconds {sample["trigger_queue_oldest_seconds"]:.1f}',
+            "# HELP myorg_connector_receipts_in_flight Outward calls that left and were never resolved.",
+            "# TYPE myorg_connector_receipts_in_flight gauge",
+            f'myorg_connector_receipts_in_flight {sample["receipts_in_flight"]}',
+            "# HELP myorg_connector_receipt_unsettled_seconds_max Age of the oldest unresolved call.",
+            "# TYPE myorg_connector_receipt_unsettled_seconds_max gauge",
+            f'myorg_connector_receipt_unsettled_seconds_max {sample["receipt_unsettled_seconds_max"]:.1f}',
+            "# HELP myorg_spend_usd_total What the runs on this host have cost so far.",
+            "# TYPE myorg_spend_usd_total gauge",
+            f'myorg_spend_usd_total {sample["spend_usd_total"]:.4f}',
+            "# HELP myorg_spend_usd_worst_run The costliest single run.",
+            "# TYPE myorg_spend_usd_worst_run gauge",
+            f'myorg_spend_usd_worst_run {sample["spend_usd_worst_run"]:.4f}',
+            "# HELP myorg_connector_authorization_expires_seconds Until the first enabled connector loses access; negative once it has.",
+            "# TYPE myorg_connector_authorization_expires_seconds gauge",
+            f'myorg_connector_authorization_expires_seconds {sample["authorization_expires_seconds"]:.0f}',
+            "# HELP myorg_org_suspended 1 while the organization is suspended: nothing new starts, nobody can sign in.",
+            "# TYPE myorg_org_suspended gauge",
+            f'myorg_org_suspended {sample["org_suspended"]}',
+            "# HELP myorg_runtime_snapshot_ok 1 when every source answered, 0 when one did not.",
+            "# TYPE myorg_runtime_snapshot_ok gauge",
+            f'myorg_runtime_snapshot_ok {sample["ok"]}',
+            "# HELP myorg_runtime_snapshot_errors_total Sources that failed since start.",
+            "# TYPE myorg_runtime_snapshot_errors_total counter",
+            f'myorg_runtime_snapshot_errors_total {sample["errors_total"]}',
+            "# HELP myorg_runtime_snapshot_duration_seconds Time taken to collect this sample.",
+            "# TYPE myorg_runtime_snapshot_duration_seconds gauge",
+            f'myorg_runtime_snapshot_duration_seconds {sample["duration_seconds"]:.6f}',
+        ))
+        return ("\n".join(lines) + "\n").encode("utf-8")

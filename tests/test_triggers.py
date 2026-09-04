@@ -210,6 +210,63 @@ class StartQueuedTest(TriggerTestBase):
                                             "webhook", reference, GOAL)
         return row
 
+    def test_a_busy_server_does_not_spend_one_of_the_ideas_three_chances(self) -> None:
+        """A real 529 threw away a real request. `plan()` recycled the transport error as
+        malformed-JSON feedback, burning all three repair attempts inside one outage, and
+        this loop then counted that as a permanent attempt. Three passes later the idea was
+        abandoned for a fault that fixes itself."""
+        from runtime.executor import ExecutorError
+        overloaded = "API Error: 529 Overloaded. This is a server-side issue, usually temporary"
+
+        def busy(_request):
+            raise ExecutorError(f"claude exited 1: result={overloaded}")
+
+        row = self.queue()
+        lines: list[str] = []
+        for _ in range(4):
+            self.assertEqual(
+                triggers.start_queued(self.store, "acme", busy, log=lines.append), [])
+        current = self.store.queued_triggers("acme", 5)
+        self.assertEqual(len(current), 1, "the idea must still be queued, not abandoned")
+        self.assertEqual(current[0]["id"], row["id"])
+        self.assertEqual(current[0]["attempts"], 0, "a busy server spends no attempts")
+        self.assertIn("529", current[0]["last_error"], "the reason is still recorded")
+        self.assertTrue(any("transient" in line for line in lines))
+
+    def test_a_bad_request_still_spends_its_attempts_and_keeps_the_reason(self) -> None:
+        """The other half: a failure that is genuinely this idea's fault must still give up,
+        and the give-up line must not overwrite the reason with a count -- that left an
+        operator holding "gave up after 3 attempts" and no why."""
+        from runtime.executor import ExecutorError
+
+        def wrong(_request):
+            raise ExecutorError("result=Prompt is too long")
+
+        self.queue()
+        for _ in range(3):
+            triggers.start_queued(self.store, "acme", wrong, log=lambda _m: None)
+        self.assertEqual(self.store.queued_triggers("acme", 5)[0]["attempts"], 3)
+        triggers.start_queued(self.store, "acme", wrong, log=lambda _m: None)
+        settled = self.store.failed_triggers()
+        self.assertEqual(len(settled), 1)
+        self.assertIn("gave up after 3 attempts", settled[0]["last_error"])
+        self.assertIn("Prompt is too long", settled[0]["last_error"])
+
+    def test_planning_announces_itself_before_it_blocks_the_sweep(self) -> None:
+        """Planning happens inside the sweep and ahead of the drive pass, so a slow model
+        call stops everything for minutes. Logging only the outcome left the log silent
+        throughout -- and a silent scheduler is indistinguishable from a dead one, which is
+        exactly how a real company looked while one un-plannable idea was retried."""
+        from runtime.planner import StubPlannerBackend
+        self.queue()
+        lines: list[str] = []
+        triggers.start_queued(self.store, "acme", StubPlannerBackend(), log=lines.append)
+        announcements = [line for line in lines if "planning" in line]
+        self.assertEqual(len(announcements), 1, lines)
+        self.assertIn("attempt 1 of", announcements[0])
+        self.assertIn("nothing else moves", announcements[0],
+                      "the reader must know the whole sweep is waiting on this")
+
     def test_a_queued_trigger_becomes_a_run_nobody_created(self) -> None:
         from runtime.planner import StubPlannerBackend
         intake = self.queue()
