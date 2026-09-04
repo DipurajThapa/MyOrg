@@ -75,9 +75,15 @@ check "honest scope note (no hooks)" "grep -qi 'convention' logs/README.md"
 echo ""; echo "── L5 Skill present & disciplined ──"
 check "SKILL.md exists"           "[ -f $SKILL ]"
 check "append-only in skill"      "grep -qi 'Append-only' $SKILL"
-check "safe python append in skill" "grep -q 'json.dumps(entry)' $SKILL"
-check "no-verbatim-note rule"     "grep -qi 'never verbatim' $SKILL"
-check "verify-after-append step"  "grep -qi 'tail -1' $SKILL"
+# These three used to require the skill to teach an agent how to append a line by hand.
+# That is the thing CLAUDE.md 3 forbids -- "a side effect of the gate, never something an
+# agent chooses to write" -- and `runtime/audit.py` has no `append` command for the same
+# reason. The checks were pinning the contradiction, so they now hold the rule instead.
+check "skill refuses to write the log"  "grep -qi 'You never write to it' $SKILL"
+check "skill cites the constitution"    "grep -q 'CLAUDE.md' $SKILL"
+check "skill routes through the gate"   "grep -q 'company_runtime gate' $SKILL"
+check "no hand-append recipe in skill"  "! grep -q 'json.dumps(entry)' $SKILL"
+check "gate verb exists"                "python3 -m runtime.company_runtime --help 2>&1 | grep -q 'gate'"
 check "SLA-start convention"      "grep -qi 'SLA clock starts' $SKILL"
 check "red-flags section"         "grep -qi 'Red flags' $SKILL"
 check "log-at-the-moment rule"    "grep -qi 'at the moment' $SKILL"

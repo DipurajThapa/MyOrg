@@ -107,9 +107,17 @@ class MyOrgService:
         """Every run in this organization, newest change first, with what a person can do
         about it. Read-only; the same audience that may see the decision queue."""
         from runtime import company_runtime as core
+        from runtime.escalation import DEAD_END
         rows = self.store.runs(principal.org_id)
         for row in rows:
-            row["can_cancel"] = row.get("runtime_status") not in core.TERMINAL_RUN
+            status = row.get("runtime_status")
+            row["can_cancel"] = status not in core.TERMINAL_RUN
+            # `blocked_retry_limit` is not an explanation. The plain-language reason already
+            # exists -- escalation writes it into every notice -- and the page was left
+            # showing the status word at exactly the moment something went wrong. One
+            # source for both, so a new terminal state cannot be legible in a notice and
+            # jargon on the screen.
+            row["reason"] = DEAD_END.get(status, "") if status in core.TERMINAL_RUN else ""
         return rows
 
     def pending_decisions(self, principal: Principal) -> list[dict]:

@@ -8,9 +8,11 @@ import logging
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -557,6 +559,16 @@ def create_server(host: str, port: int, database: str | Path, auth_secret: str,
 
 
 def main() -> int:
+    # A service has no console. Redirect before anything can print, so a refusal below --
+    # a missing secret, a port already taken -- lands in the file rather than nowhere: this
+    # process is started by a scheduled task under pythonw.exe, where stdout is discarded
+    # and a silent exit is indistinguishable from a running server.
+    log_file = os.environ.get("MYORG_API_LOG_FILE")
+    if log_file:
+        handle = open(log_file, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+        sys.stdout = sys.stderr = handle
+        print(f"api starting at {datetime.now(timezone.utc).isoformat(timespec='seconds')}"
+              f" pid={os.getpid()}")
     host = os.environ.get("MYORG_HOST", "127.0.0.1")
     port = int(os.environ.get("MYORG_PORT", "8080"))
     if host not in {"127.0.0.1", "::1", "localhost"} and os.environ.get("MYORG_BEHIND_TLS") != "1":

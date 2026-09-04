@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +46,19 @@ MAX_ITERATIONS = 50
 # real run failed three times reading "Criterion 3 misses. What criterion 3 misses 1.".
 # Bounded, because the reason rides in every later event of the run log.
 MAX_REASON_CHARS = 2000
+# How many independent steps of one pass may be in a model call at once.
+#
+# The default is 1, and that is a governance decision rather than caution. A spend ceiling is
+# read *before* a dispatch and the spend is recorded *after* it, so steps that start together
+# all pass a check each of them is about to invalidate -- with several independent steps the
+# ceiling stops binding within a pass at all. Concurrency cannot be reconciled with an exact
+# ceiling without reserving budget against an estimate nobody has.
+#
+# So the speed is available and opted into, not assumed: raise this where wall-clock matters
+# more than an exact stop, and the overshoot is bounded by what one pass of concurrent steps
+# costs. `MYORG_RUN_CEILING_USD=0` disables the ceiling entirely, which is the honest pairing
+# for a high setting here.
+MAX_PARALLEL_STEPS = max(1, int(os.environ.get('MYORG_MAX_PARALLEL_STEPS', '1')))
 GRADE_ATTEMPTS = 3           # a grader blip must not cost a person's attention
 GRADE_BACKOFF_SECONDS = 2    # multiplied by the attempt number
 HALTED = core.WAITING_STEP
@@ -204,7 +218,9 @@ def acceptance_failure(run_id, step_id, step, state, backend, output,
         step_id=step_id, agent=step["owner"], goal=state["goal"],
         brief=agent_brief(step["owner"]), criteria=criteria,
         deliverable=clip(output, MAX_SUBMISSION_CHARS),
-        author_could_search=tools.reaches_outward(tools.grant_for(step["owner"])))
+        author_could_search=tools.reaches_outward(tools.grant_for(step["owner"])),
+        # Straight from the dispatch that produced this text, never re-derived from it.
+        retrieved=getattr(output, "retrieved", ()))
     last = None
     for attempt in range(1, GRADE_ATTEMPTS + 1):
         try:
@@ -393,6 +409,49 @@ def over_budget(run_id: str, step_id: str, owner: str, state: dict, log) -> bool
     return True
 
 
+def drive_together(work, step_ids: list[str], run_id: str, state: dict, backend, log) -> None:
+    """Run this pass's independent steps at the same time.
+
+    `depends_on` already says what may overlap: a step is `ready` only once everything it
+    waits for has completed, so anything ready together is independent by construction. They
+    were still driven one after another, and each spends minutes inside a model call, so a
+    plan with three parallel branches took three times as long as the work required.
+
+    Every state change still goes through `mutate` under the run lock; only the model calls
+    overlap. Two accepted costs, both bounded:
+
+    - The cost ceiling is read before a dispatch, so N steps starting together can each pass
+      a check the others are about to invalidate. The overshoot is at most one pass of
+      concurrent steps, and the ceiling parks the *next* pass -- it was always a soft stop.
+    - One step's failure must not lose the others' work, so each is caught and reported
+      exactly as it would have been in the loop this replaces.
+
+    `MYORG_MAX_PARALLEL_STEPS` bounds it. 1 restores the old sequential behaviour exactly,
+    which is what the tests with counting backends rely on.
+    """
+    if not step_ids:
+        return
+    width = max(1, min(MAX_PARALLEL_STEPS, len(step_ids)))
+    if width == 1 or len(step_ids) == 1:
+        for step_id in step_ids:
+            work(run_id, step_id, state, backend, log)
+        return
+    lines: list[str] = []
+    with ThreadPoolExecutor(max_workers=width) as pool:
+        futures = {pool.submit(work, run_id, sid, state, backend, lines.append): sid
+                   for sid in step_ids}
+        for future in as_completed(futures):
+            step_id = futures[future]
+            try:
+                future.result()
+            except (ExecutorError, SystemExit) as error:
+                lines.append(f"  {step_id}: stopped -- {error}")
+    # One writer for the log, after the fact: `log` is often a list append or a file, and
+    # neither is safe to call from several threads at once.
+    for line in lines:
+        log(line)
+
+
 def drive_step(run_id: str, step_id: str, state: dict, backend, log) -> None:
     step = state["steps"][step_id]
     owner = step["owner"]
@@ -514,10 +573,10 @@ def advance(run_id: str, backend, max_iterations: int = MAX_ITERATIONS, log=prin
             log(f"run {run_id}: no work left; waiting on a human for {waiting or 'nothing'}")
             return state
         log(f"run {run_id}: driving {len(ready)} step(s), {len(checks)} check(s)")
-        for step_id in ready:
-            drive_step(run_id, step_id, state, backend, log)
-        for step_id in checks:
-            drive_check(run_id, step_id, state, backend, log)
+        drive_together(drive_step, ready, run_id, state, backend, log)
+        # Checks run after the work of this pass, because a check reads what the pass
+        # produced. Within that, they are independent of each other.
+        drive_together(drive_check, checks, run_id, state, backend, log)
     raise ExecutorError(f"run {run_id} did not settle within {max_iterations} iterations")
 
 

@@ -149,6 +149,23 @@ MYORG_AUTH_SECRET=<32+ bytes> MYORG_CONSOLE_ACTOR=<your actor id>   python -m ru
 
 Then open `http://127.0.0.1:8080/`.
 
+**Keeping it running.** Started by hand it dies with the terminal, and the console is the
+only surface a person can look at. On Windows install it as a task beside the scheduler's:
+
+```
+powershell -ExecutionPolicy Bypass -File deploy/install-console-windows.ps1 `
+    -RepoRoot C:\AgenticAI\MyOrg -Python <python.exe> -ConsoleActor <your actor id>
+```
+
+It starts at logon, is restarted if it stops, runs without a window, and writes to
+`runtime/runs/_api.log`. `MYORG_API_LOG_FILE` is what redirects it: under `pythonw` there is
+no console, so without that a refusal -- a missing secret, a port already taken -- exits
+silently and looks exactly like a healthy server.
+
+The installer refuses to generate `MYORG_AUTH_SECRET`. A fresh secret on every start
+invalidates every token already issued, so it must be set once, for the account, and left
+alone. On Linux the equivalent is `deploy/myorg-api.service`.
+
 `MYORG_CONSOLE_ACTOR` names the human the console acts as; `MYORG_CONSOLE_ORG` selects the
 organization (default `default`). Both routes — the page and `GET /v1/console/token` — answer
 `404` unless that variable is set **and** the request comes from the loopback interface, so

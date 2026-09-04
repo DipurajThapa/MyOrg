@@ -103,6 +103,20 @@ class PlanRequest:
             "rejection: a real run set 2 attempts against 1 review cycle, failed the "
             "grader once, and had nothing left when the checker returned the work.\n"
             "- Give an unchecked step 2 or 3. One means a single bad answer ends it.\n"
+            "\n"
+            "`depends_on` is what decides how fast this runs. Steps with nothing left to "
+            "wait for are dispatched together, so the shape of the graph is the schedule:\n"
+            "- List a dependency only where the step genuinely needs that step's *output*. "
+            "'It feels later' is not a dependency, and a chain of eight steps each waiting "
+            "on the one before takes eight times as long as the work needs.\n"
+            "- Independent research, retrieval and analysis belong side by side with the "
+            "same (or no) dependencies -- several scans, several data pulls, several "
+            "drafts for different departments.\n"
+            "- Join them where the work genuinely merges: one step that depends on all the "
+            "branches, which is where their findings get reconciled.\n"
+            "- Do not split one piece of work across branches to look parallel. Two steps "
+            "researching the same thing pay twice and then disagree.\n"
+            "- The gated step goes last and depends on what it is about to act on.\n"
         )
 
     def repair(self) -> str:

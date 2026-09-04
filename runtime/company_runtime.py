@@ -619,6 +619,56 @@ def fail(args) -> None:
     state=mutate(args.run_id,args.request_id,"step.failed",args.actor,args.step,change); print(state["steps"][args.step]["status"])
 
 
+def gate(args) -> None:
+    """Put one department's outward action through the runtime, and let the gate decide.
+
+    This is how a department that works in a conversation -- not in a planned run -- gets
+    the same governance as one that does. It builds a one-step run for the action, then
+    requests that step, so the *policy* classifies it and the runtime does the rest: a
+    yellow action parks at `awaiting_approval` and appears in the console's queue, a red one
+    blocks for a human, and either way the audit entry is written by the gate.
+
+    That last part is the whole point. `CLAUDE.md` §3 says the record is a side effect of
+    the gate and never something an agent chooses to write, and `runtime/audit.py` has no
+    `append` command precisely so an agent cannot be handed one. Before this there was no
+    other route, so sixteen of seventeen departments logged nothing at all -- the skills
+    asked agents to write entries by hand, which is the thing the constitution forbids.
+
+    Prints the run id. Nothing here sends, publishes or spends: it records the intent and
+    stops. The action itself still waits for a person.
+    """
+    if args.action not in policy():
+        raise SystemExit(f"action is not policy-classified: {args.action}")
+    if not agent_exists(args.owner):
+        raise SystemExit(f"unknown department: {args.owner}")
+    summary = str(args.summary).strip()
+    if not 10 <= len(summary) <= 500:
+        raise SystemExit("summary must be 10..500 characters -- it is what the approver reads")
+    run_id = args.run_id
+    workflow = {
+        "version": 1, "id": f"wf-{run_id}", "goal": summary, "max_cycles": 4,
+        "steps": [{"id": "act", "owner": args.owner, "action": args.action,
+                   "depends_on": [], "max_attempts": 1}],
+    }
+    RUNS.mkdir(parents=True, exist_ok=True)
+    destination = RUNS / f"{run_id}.gate.json"
+    destination.write_text(json.dumps(workflow, indent=2) + "\n", encoding="utf-8")
+    import io
+    from contextlib import redirect_stdout
+    with redirect_stdout(io.StringIO()):
+        create_run(argparse.Namespace(workflow=str(destination), run_id=run_id,
+                                      actor=args.owner,
+                                      org=getattr(args, "org", None) or DEFAULT_ORG,
+                                      request_id=f"gate-create-{args.request_id}", spend=0.0))
+    # Both of those print their own line; this command has one answer, which is what the
+    # gate decided.
+    with redirect_stdout(io.StringIO()):
+        request_step(argparse.Namespace(run_id=run_id, step="act", actor=args.owner,
+                                        holder=args.owner,
+                                        request_id=f"gate-request-{args.request_id}"))
+    print(read_events(run_id)[-1]["steps"]["act"]["status"])
+
+
 def release_step(args) -> None:
     """Put back a step whose attempt never happened, and give back the attempt.
 
@@ -757,6 +807,7 @@ def parser():
     for name,func in (("check-approve",check_approve),("check-return",check_return),("check-reject",check_reject)):
         command=commands.add_parser(name); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor",required=True); command.add_argument("--message-id",required=True); command.add_argument("--request-id",required=True); command.add_argument("--spend",type=float,default=0.0)
         command.set_defaults(func=func)
+    command=commands.add_parser("gate", help="put one department action through the gate"); command.add_argument("run_id"); command.add_argument("--owner",required=True); command.add_argument("--action",required=True); command.add_argument("--summary",required=True); command.add_argument("--org"); command.add_argument("--request-id",required=True); command.set_defaults(func=gate)
     command=commands.add_parser("release-step"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor",required=True); command.add_argument("--reason",required=True); command.add_argument("--spend",type=float,default=0.0); command.add_argument("--claim-token"); command.add_argument("--request-id",required=True); command.set_defaults(func=release_step)
     command=commands.add_parser("expire-claim"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--actor"); command.add_argument("--request-id",required=True); command.set_defaults(func=expire_claim)
     command=commands.add_parser("renew-claim"); command.add_argument("run_id"); command.add_argument("step"); command.add_argument("--holder",required=True); command.add_argument("--claim-token",required=True); command.add_argument("--request-id",required=True); command.set_defaults(func=renew_claim)

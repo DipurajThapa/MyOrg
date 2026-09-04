@@ -10,6 +10,10 @@ import json
 import subprocess
 from pathlib import Path
 
+# The one list of tools that reach outward, so the provenance record and the
+# grant it comes from can never disagree about what a search is.
+from runtime.tools import NETWORK_TOOLS  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 STEP_TIMEOUT_SECONDS = 300
 
@@ -42,10 +46,15 @@ class Output(str):
     runs were driven at once. This breaks in neither direction.
     """
     cost_usd: float = 0.0
+    # What the agent actually retrieved, taken from the CLI's own tool-call record rather
+    # than from anything the agent said about its research. A model asked what it searched
+    # answers from memory; this is the execution log.
+    retrieved: tuple = ()
 
-    def __new__(cls, text: str, cost_usd: float = 0.0):
+    def __new__(cls, text: str, cost_usd: float = 0.0, retrieved: tuple = ()):
         value = super().__new__(cls, text)
         value.cost_usd = float(cost_usd)
+        value.retrieved = tuple(retrieved)
         return value
 
 
@@ -149,6 +158,56 @@ def cli_failure(stdout: str, stderr: str, limit: int = 400) -> str:
     return " | ".join(parts) or "no output on either stream"
 
 
+def unpack_stream(raw: str) -> tuple[str, float, tuple]:
+    """The deliverable, its cost, and every search the agent actually ran.
+
+    `--output-format stream-json` emits one JSON object per line: assistant messages whose
+    content blocks include `tool_use`, the matching `tool_result`, and a final `result`.
+    Reading the searches from here rather than from the deliverable is the whole point --
+    a citation is eligible because a tool call fetched it, not because the text claims so.
+
+    A line that will not parse is skipped rather than fatal: the record is evidence for the
+    grader, and losing one line must not lose a finished step's work.
+    """
+    text, cost, calls, results = "", 0.0, {}, []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            event = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if event.get("type") == "result":
+            text = str(event.get("result") or text)
+            cost = float(event.get("total_cost_usd") or cost)
+        for block in (event.get("message") or {}).get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use" and block.get("name") in NETWORK_TOOLS:
+                calls[block.get("id")] = str((block.get("input") or {}).get("query", ""))[:200]
+            elif block.get("type") == "tool_result" and block.get("tool_use_id") in calls:
+                # Keep the query and a bounded slice of what came back. The URLs a grader
+                # needs to check a citation against are in here; the rest is not worth
+                # carrying into another prompt.
+                results.append({"query": calls.pop(block["tool_use_id"]),
+                                "returned": _result_text(block)[:2000]})
+    # A search that never returned still happened, and its absence of results is itself
+    # evidence -- a citation attributed to it is not eligible.
+    results.extend({"query": query, "returned": ""} for query in calls.values())
+    return text, cost, tuple(results)
+
+
+def _result_text(block: dict) -> str:
+    content = block.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(str(part.get("text", "")) for part in content
+                        if isinstance(part, dict))
+    return ""
+
+
 class ClaudeCliBackend:
     """Dispatches a step to the owning agent through the local `claude` CLI.
 
@@ -167,9 +226,13 @@ class ClaudeCliBackend:
         # prompt nobody is there to answer.
         room = getattr(request, "workspace", None)
         grant = getattr(request, "grant", None)
-        # JSON rather than text, only so the CLI's own `total_cost_usd` comes back with the
-        # answer. Nothing can count what a step spends by inspecting its prose.
-        command = ["claude", "-p", request.prompt(), "--output-format", "json",
+        # A stream when the agent can reach outward, plain JSON otherwise. The stream is
+        # the only place the CLI reports the tool calls it actually made, and those calls
+        # are the evidence a citation is real: a model asked what it searched will answer
+        # from memory. Nothing else needs the extra parsing, so nothing else pays for it.
+        searching = bool(grant) and any(name in NETWORK_TOOLS for name in grant.tools)
+        fmt = ["--output-format", "stream-json", "--verbose"] if searching else               ["--output-format", "json"]
+        command = ["claude", "-p", request.prompt(), *fmt,
                    "--append-system-prompt", request.brief,
                    "--permission-mode", "dontAsk", *DISPATCH_PROFILE]
         if grant and room:

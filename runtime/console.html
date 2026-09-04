@@ -414,6 +414,7 @@ function renderRuns(items) {
         `${esc(item.workflow_id)} · cycle ${esc(item.cycle_count)}/${esc(item.max_cycles)} · ` +
         `updated ${esc(item.updated_at)}` +
       `</div>` +
+      (item.reason ? `<div class="meta">It ${esc(item.reason)}.</div>` : "") +
       (item.goal ? `<div class="body">${esc(item.goal)}</div>` : "");
 
     const show = document.createElement("button");

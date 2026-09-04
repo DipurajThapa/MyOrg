@@ -105,6 +105,28 @@ class OperatorWork(unittest.TestCase):
         self.assertEqual(len(self.service.ideas(self.principal())), 1)
         self.assertEqual(self.service.ideas(self.principal("owner", "other")), [])
 
+    def test_a_stopped_run_says_why_in_words_not_in_a_status_code(self):
+        """`blocked_retry_limit` is not an explanation. The plain-language reason already
+        exists in `escalation.DEAD_END`, and the run list did not use it -- so the operator
+        met jargon at the moment something went wrong. One source for notice and screen."""
+        from runtime import escalation, projection
+        run_id = self.make_run("run-stopped")
+        self.core.cancel_run(argparse.Namespace(
+            run_id=run_id, approver="Owner", actor_id="owner", reason="not needed",
+            request_id="stop-1"))
+        projection.project_run(self.store, run_id)
+        row = next(r for r in self.service.runs(self.principal()) if r["id"] == run_id)
+        self.assertEqual(row["reason"], escalation.DEAD_END["cancelled"])
+        self.assertIn("stopped by", row["reason"])
+        self.assertFalse(row["can_cancel"])
+
+        # A live run has no reason to give, and must not invent one.
+        alive = self.make_run("run-alive")
+        projection.project_run(self.store, alive)
+        row = next(r for r in self.service.runs(self.principal()) if r["id"] == alive)
+        self.assertEqual(row["reason"], "")
+        self.assertTrue(row["can_cancel"])
+
     def test_an_abandoned_idea_stays_on_screen_and_raises_a_notice(self):
         """The planner can give up. Nothing else here is a run, so a dead trigger fell
         through every check: money spent, request deleted from every screen, operator never
