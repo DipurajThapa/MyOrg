@@ -138,12 +138,22 @@ class Console(unittest.TestCase):
                       "a button that cannot work must not invite a click")
 
     def test_no_panel_is_left_saying_loading_when_a_load_fails(self):
-        """A placeholder that never clears reads as a hang rather than an error."""
+        """A placeholder that never clears reads as a hang rather than an error.
+
+        This counted panels and named them one by one, which pinned the fixture rather than
+        the property: adding a panel broke a test about something else entirely. What has to
+        hold is that every panel starting on a placeholder is listed in PANELS, because
+        PANELS is exactly what `stall` clears on each failure path.
+        """
         page = (ROOT / "runtime" / "console.html").read_text(encoding="utf-8")
-        placeholders = page.count('<div class="empty">loading…</div>')
-        self.assertEqual(placeholders, 4, "four panels start with a placeholder")
-        self.assertIn('const PANELS = ["decisions", "memory", "ideas", "runs"]', page)
-        # Every failure path replaces them.
+        listed = re.search(r"const PANELS = \[(.*?)\]", page)
+        self.assertIsNotNone(listed, "the page must name its panels in one place")
+        panels = re.findall(r'"([a-z]+)"', listed.group(1))
+        self.assertTrue(panels, "PANELS must not be empty")
+        waiting = re.findall(r'<div id="([a-z]+)"><div class="empty">loading…</div></div>',
+                             page)
+        self.assertEqual(sorted(waiting), sorted(panels),
+                         "a panel that starts on a placeholder must be one stall() clears")
         self.assertEqual(page.count("stall("), 4,
                          "one definition and one call on each of the three failure paths")
 

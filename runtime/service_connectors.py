@@ -10,8 +10,33 @@ import secrets
 from runtime.service_core import Forbidden, ID_RE, REF_RE, SCOPE_RE, SECRET_REF_RE, SHA256_RE, ServiceError, _policy, _require
 
 
+# How long a proposed outward call stays answerable. This was fifteen minutes, which is a
+# machine's deadline on a human's decision: the whole premise here is that a person decides
+# when they get to it, and there is a notification path precisely because nobody is watching
+# the screen. An approval binds one exact payload by hash, so waiting does not let anything
+# else through -- it only lets the person answer at a realistic hour.
+APPROVAL_WINDOW_HOURS = 24
+
+
 class ConnectorsServiceMixin:
     """Asking to touch the outside world, and the record of having touched it."""
+
+    def pending_connector_approvals(self, principal: Principal) -> list[dict]:
+        """Outward calls proposed and waiting on a person.
+
+        Until this existed the gate could be created and it could be decided, and there was
+        nothing in between: no route and no store query ever reported that an approval was
+        waiting, so answering one meant already knowing its id and its 64-character action
+        hash. The strictest gate in the company was unanswerable in practice.
+        """
+        _require(principal, "decision-owner", "system-admin", "auditor", "chief-of-staff")
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        return [{"approval_id": row["id"], "run_id": row["run_id"], "action": row["action"],
+                 "action_hash": row["action_hash"], "target_ref": row["target_ref"],
+                 "payload_ref": row["payload_ref"], "payload_sha256": row["payload_sha256"],
+                 "requested_by": row["requested_by"], "requested_at": row["requested_at"],
+                 "expires_at": row["expires_at"], "expired": row["expires_at"] <= now}
+                for row in self.store.pending_approvals(principal.org_id)]
 
     def request_approval(self, principal: Principal, body: dict, request_id: str) -> dict:
         _require(principal, "maker", "chief-of-staff", "system-admin")
@@ -30,7 +55,7 @@ class ConnectorsServiceMixin:
             raise ServiceError("connector is not enabled for the requested proposed write")
         exact_hash = action_digest(body["connector_id"], body["action"], body["target_ref"], body["payload_ref"], body["payload_sha256"])
         approval_id = f"approval-{secrets.token_hex(8)}"
-        expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+        expires = datetime.now(timezone.utc) + timedelta(hours=APPROVAL_WINDOW_HOURS)
         return self.store.create_approval(
             principal.org_id, approval_id, body["run_id"], body["action"], exact_hash,
             body["target_ref"], body["payload_ref"], body["payload_sha256"], principal.actor_id,
@@ -41,12 +66,20 @@ class ConnectorsServiceMixin:
         _require(principal, "decision-owner")
         if principal.actor_type != "human":
             raise Forbidden("approval decisions require a registered human identity")
-        if set(body) != {"decision", "action_hash"} or body["decision"] not in {"approve", "reject"}:
-            raise ServiceError("decision must be approve/reject with the exact action_hash")
+        if set(body) != {"decision", "action_hash", "reason"} \
+                or body["decision"] not in {"approve", "reject"}:
+            raise ServiceError("decision must be approve/reject with the exact action_hash "
+                               "and a reason")
         if not SHA256_RE.fullmatch(str(body["action_hash"])):
             raise ServiceError("action_hash must be SHA-256")
+        # The same reason every other human decision in this company carries. This is the
+        # gate that actually sends something, and it was the one recording no why at all.
+        reason = str(body["reason"]).strip()
+        if not 1 <= len(reason) <= 200 or not reason.isprintable():
+            raise ServiceError("reason must be 1..200 printable characters on one line")
         return self.store.decide_approval(principal.org_id, approval_id, principal.actor_id,
-                                          body["action_hash"], body["decision"], request_id)
+                                          body["action_hash"], body["decision"], request_id,
+                                          reason)
 
     def execute_fixture(self, principal: Principal, body: dict, idempotency_key: str) -> tuple[dict, bool]:
         _require(principal, "connector-gateway")

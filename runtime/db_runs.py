@@ -107,12 +107,25 @@ class RunsMixin:
             raise NotFound("approval not found")
         return dict(row)
 
+    def pending_approvals(self, org_id: str, limit: int = 50) -> list[dict]:
+        """Outward calls proposed and not yet decided, oldest first.
+
+        There was no way to read this at all: an approval could be created by id and
+        decided by id, and nothing in between ever said one existed. A human had to already
+        know both the approval id and its 64-character action hash to answer the strictest
+        gate in the company.
+        """
+        with self.reading() as connection:
+            return [dict(row) for row in connection.execute(
+                "SELECT * FROM approvals WHERE org_id=? AND status='pending' "
+                "ORDER BY requested_at, rowid LIMIT ?", (org_id, int(limit)))]
+
     def approval(self, org_id: str, approval_id: str) -> dict:
         with self.reading() as connection:
             return self._approval(connection, org_id, approval_id)
 
     def decide_approval(self, org_id: str, approval_id: str, actor_id: str, action_hash: str,
-                        decision: str, request_id: str) -> dict:
+                        decision: str, request_id: str, reason: str = "") -> dict:
         with self.transaction() as connection:
             approval = self._approval(connection, org_id, approval_id)
             if approval["status"] != "pending":
@@ -130,25 +143,10 @@ class RunsMixin:
                 "UPDATE approvals SET status=?,decided_by=?,decided_at=? WHERE org_id=? AND id=?",
                 (status, actor_id, timestamp, org_id, approval_id),
             )
+            # The reason rides in the event rather than a new column: every other human
+            # decision in this company is recorded with a why, and this is the one that
+            # actually sends something.
             self._append_event(connection, org_id, approval["run_id"], f"approval.{status}", actor_id, request_id,
-                               {"approval_id": approval_id, "action_hash": action_hash})
-            return self._approval(connection, org_id, approval_id)
-
-    def consume_approval(self, org_id: str, approval_id: str, actor_id: str, action_hash: str, request_id: str) -> dict:
-        with self.transaction() as connection:
-            approval = self._approval(connection, org_id, approval_id)
-            if approval["status"] != "approved":
-                raise Conflict("approval is not approved or was already consumed")
-            if approval["action_hash"] != action_hash:
-                raise Conflict("approval does not match the exact action hash")
-            if approval["expires_at"] <= utc_now():
-                connection.execute("UPDATE approvals SET status='expired' WHERE org_id=? AND id=?", (org_id, approval_id))
-                raise Conflict("approval expired")
-            timestamp = utc_now()
-            connection.execute(
-                "UPDATE approvals SET status='consumed',consumed_by=?,consumed_at=? WHERE org_id=? AND id=? AND status='approved'",
-                (actor_id, timestamp, org_id, approval_id),
-            )
-            self._append_event(connection, org_id, approval["run_id"], "approval.consumed", actor_id, request_id,
-                               {"approval_id": approval_id, "action_hash": action_hash})
+                               {"approval_id": approval_id, "action_hash": action_hash,
+                                "reason": reason})
             return self._approval(connection, org_id, approval_id)

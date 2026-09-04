@@ -79,6 +79,64 @@ class Foundation(unittest.TestCase):
         }, f"approval-request-{run_id}")
         return result
 
+    def test_a_proposed_outward_call_can_actually_be_found(self):
+        """The gate was creatable and decidable with nothing in between.
+
+        No route and no store query ever reported that an approval was waiting, so a person
+        could only answer one by already knowing its id and its 64-character action hash.
+        The strictest gate in the company was, in practice, unanswerable.
+        """
+        approval = self.approval()
+        waiting = self.service.pending_connector_approvals(self.principal("human-owner"))
+        self.assertEqual([item["approval_id"] for item in waiting], [approval["id"]])
+        item = waiting[0]
+        self.assertEqual(item["action_hash"], approval["action_hash"],
+                         "the hash the decision is checked against must be readable")
+        self.assertFalse(item["expired"])
+        for field in ("action", "target_ref", "payload_ref", "requested_by", "expires_at"):
+            self.assertTrue(item[field], f"{field} is what the decision is taken on")
+
+        self.service.decide_approval(
+            self.principal("human-owner"), approval["id"],
+            {"decision": "approve", "action_hash": approval["action_hash"],
+             "reason": "checked the payload"}, "seen-decision")
+        self.assertEqual(self.service.pending_connector_approvals(self.principal("human-owner")),
+                         [], "a decided call stops waiting")
+
+    def test_a_person_has_longer_than_a_coffee_break_to_decide(self):
+        """Fifteen minutes was a machine's deadline on a human's decision. The whole premise
+        is that a person answers when they get to it, and there is a notification path
+        precisely because nobody watches the screen. The approval binds one exact payload by
+        hash, so a longer window lets nothing else through."""
+        from datetime import datetime, timedelta, timezone
+        from runtime.service_connectors import APPROVAL_WINDOW_HOURS
+        approval = self.approval()
+        expires = datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00"))
+        self.assertGreater(expires, datetime.now(timezone.utc) + timedelta(hours=1),
+                           "a person must be able to answer this after a meeting")
+        self.assertEqual(APPROVAL_WINDOW_HOURS, 24)
+
+    def test_the_gate_that_actually_sends_records_why(self):
+        """Every other human decision here carries a reason. This was the one that did not,
+        and it is the one that puts something outside the building."""
+        approval = self.approval()
+        for body in ({"decision": "approve", "action_hash": approval["action_hash"]},
+                     {"decision": "approve", "action_hash": approval["action_hash"],
+                      "reason": ""},
+                     {"decision": "approve", "action_hash": approval["action_hash"],
+                      "reason": "x" * 201}):
+            with self.assertRaises(ServiceError, msg=str(body)):
+                self.service.decide_approval(self.principal("human-owner"), approval["id"],
+                                             body, "no-reason")
+        self.service.decide_approval(
+            self.principal("human-owner"), approval["id"],
+            {"decision": "approve", "action_hash": approval["action_hash"],
+             "reason": "the customer asked for this in writing"}, "with-reason")
+        events = self.store.run_events("acme", approval["run_id"])
+        decided = [e for e in events if e["event_type"] == "approval.approved"]
+        self.assertEqual(len(decided), 1)
+        self.assertIn("the customer asked for this in writing", json.dumps(decided[-1]))
+
     def test_roles_are_bound_to_database_not_token(self):
         token = self.tokens.issue("acme", "viewer", now_epoch=100)
         self.store.upsert_actor("acme", "viewer", "human", "Viewer", ["system-admin"])
@@ -142,7 +200,7 @@ class Foundation(unittest.TestCase):
         exact = approval["action_hash"]
         with self.assertRaises(Forbidden):
             self.service.decide_approval(self.principal("maker-agent"), approval["id"],
-                                         {"decision": "approve", "action_hash": exact}, "bad-agent-decision")
+                                         {"decision": "approve", "action_hash": exact, "reason": "checked the payload"}, "bad-agent-decision")
         self.store.upsert_actor("acme", "maker-human", "human", "Maker Human", ["maker", "decision-owner"])
         self.create_test_run("run-human")
         human_approval = self.service.request_approval(self.principal("maker-human"), {
@@ -151,12 +209,12 @@ class Foundation(unittest.TestCase):
         }, "approval-human")
         with self.assertRaises(Conflict):
             self.service.decide_approval(self.principal("maker-human"), human_approval["id"],
-                                         {"decision": "approve", "action_hash": human_approval["action_hash"]}, "self-decision")
+                                         {"decision": "approve", "action_hash": human_approval["action_hash"], "reason": "checked the payload"}, "self-decision")
         with self.assertRaises(Conflict):
             self.service.decide_approval(self.principal("human-owner"), approval["id"],
-                                         {"decision": "approve", "action_hash": "b" * 64}, "wrong-hash")
+                                         {"decision": "approve", "action_hash": "b" * 64, "reason": "checked the payload"}, "wrong-hash")
         decided = self.service.decide_approval(self.principal("human-owner"), approval["id"],
-                                               {"decision": "approve", "action_hash": exact}, "owner-decision")
+                                               {"decision": "approve", "action_hash": exact, "reason": "checked the payload"}, "owner-decision")
         self.assertEqual(decided["status"], "approved")
         body = {"connector_id": "fixture-outbound", "action": "external_send",
                 "target_ref": "customers/example", "payload_ref": "artifacts/message.md",

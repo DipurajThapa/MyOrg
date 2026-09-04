@@ -116,6 +116,11 @@
   </section>
 
   <section>
+    <h2>Outward calls waiting on you</h2>
+    <div id="approvals"><div class="empty">loading…</div></div>
+  </section>
+
+  <section>
     <h2>Things agents want kept</h2>
     <div id="memory"><div class="empty">loading…</div></div>
   </section>
@@ -140,7 +145,7 @@ const el = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-const PANELS = ["decisions", "memory", "ideas", "runs"];
+const PANELS = ["decisions", "approvals", "memory", "ideas", "runs"];
 
 /** Where the API is. This page only works when the API served it: a copy opened from disk
  *  has no origin to resolve `/v1/...` against, and `fetch` fails with a parser error that
@@ -276,6 +281,44 @@ async function startWork() {
     note.className = "note err"; note.textContent = error.message;
   }
   button.disabled = false;
+}
+
+/** One proposed outward call. The hash is what the API checks the decision against, so it
+ *  is sent back verbatim rather than retyped -- it is a fingerprint, not something to read. */
+function renderApprovals(items) {
+  const host = el("approvals");
+  host.textContent = "";
+  if (!items.length) {
+    host.innerHTML = '<div class="empty">No outward call is waiting for a decision.</div>';
+    return;
+  }
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML =
+      `<h3>${esc(item.action)} → ${esc(item.target_ref)}</h3>` +
+      `<div class="meta">` +
+        `<span class="chip${item.expired ? " failed" : ""}">` +
+          `${item.expired ? "expired" : "waiting"}</span>` +
+        `asked by ${esc(item.requested_by)} for run <b>${esc(item.run_id)}</b>` +
+      `</div>` +
+      `<div class="meta">sends <b>${esc(item.payload_ref)}</b> · ` +
+        `expires ${esc(item.expires_at)}</div>` +
+      (item.expired
+        ? '<div class="note err">This can no longer be approved. The agent must propose it again.</div>'
+        : "");
+    if (!item.expired) {
+      actionRow(card, "Why? (required, 1–200 characters)", [
+        ["Approve the send", "primary", (reason) =>
+          call("POST", `/v1/approvals/${item.approval_id}/decision`,
+               { decision: "approve", action_hash: item.action_hash, reason }, "approval")],
+        ["Reject", "danger", (reason) =>
+          call("POST", `/v1/approvals/${item.approval_id}/decision`,
+               { decision: "reject", action_hash: item.action_hash, reason }, "approval")],
+      ]);
+    }
+    host.appendChild(card);
+  }
 }
 
 function renderIdeas(items) {
@@ -455,8 +498,9 @@ function renderRuns(items) {
 
 async function load() {
   try {
-    const [me, decisions, proposals, runs, ideas] = await Promise.all([
+    const [me, decisions, approvals, proposals, runs, ideas] = await Promise.all([
       call("GET", "/v1/me"), call("GET", "/v1/decisions"),
+      call("GET", "/v1/approvals"),
       call("GET", "/v1/memory/proposals"), call("GET", "/v1/runs"),
       call("GET", "/v1/ideas"),
     ]);
@@ -464,6 +508,7 @@ async function load() {
       `${me.display_name || me.actor_id} · ${me.org_id} · ${me.roles.join(", ")}`;
     renderDecisions(decisions);
     renderMemory(proposals);
+    renderApprovals(approvals);
     renderIdeas(ideas);
     renderRuns(runs);
     banner("");

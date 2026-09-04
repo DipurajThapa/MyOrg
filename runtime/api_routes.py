@@ -210,6 +210,10 @@ class RoutesMixin(OperationsRoutesMixin):
                 result = self.server.service.cancel_run(principal, parts[2], self._json(), self._request_id())
                 self._send(HTTPStatus.OK, result)
                 return
+            if method == "GET" and path == "/v1/approvals":
+                self._send(HTTPStatus.OK,
+                           self.server.service.pending_connector_approvals(principal))
+                return
             if method == "POST" and path == "/v1/approvals":
                 result = self.server.service.request_approval(principal, self._json(), self._request_id())
                 self._send(HTTPStatus.CREATED, result)

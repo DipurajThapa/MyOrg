@@ -205,3 +205,43 @@ the fix restored. A test that cannot fail is not evidence.
 - **A withdrawal is recorded in `last_error` ("withdrawn by X: reason") rather than as an
   operational event.** `settle_trigger` takes no actor, and widening it for this alone was
   not worth it. The row keeps who and why.
+
+---
+
+## Stage 4 — The outward action executing
+
+**Path.** An agent proposes → `request_approval` hashes (connector, action, target, payload
+ref, payload sha) into one `action_hash` → a human decides with that exact hash →
+`live_gateway.execute` re-verifies the payload bytes against the hash, consumes the approval
+**atomically with writing the receipt, before a single byte leaves**, sends, settles.
+
+**What holds, and this layer is the strongest in the system.** The approval is single-use and
+bound to one exact call, so a different payload cannot reuse it. The requester cannot approve
+its own action. Expiry is checked inside the consuming transaction, not before it. The host
+allowlist is re-checked at send time in case a `base_url` drifted. A timeout settles as
+`in_flight` and is never auto-retried — a person reconciles it, because "we do not know" is
+the only honest answer to a timeout.
+
+### Fixed
+
+| Issue | Fix |
+|---|---|
+| **The gate could not be answered.** Two routes existed — create and decide — and nothing in between. No route and no store query ever reported that an approval was waiting, and the console had no panel for it. Answering one meant already knowing its id *and* its 64-character action hash. The strictest gate in the company was unanswerable in practice. | `pending_approvals` in the store, `GET /v1/approvals`, and a console panel that sends the hash back verbatim rather than asking anyone to read it. |
+| **Fifteen minutes to decide.** `request_approval` gave a *human* a machine's deadline, in a system whose whole premise is that people answer when they get to it and whose notification path exists because nobody watches the screen. Nothing renewed it; the agent had to propose again. | `APPROVAL_WINDOW_HOURS = 24`, named and reasoned. The approval binds one exact payload by hash, so a longer window lets nothing else through — it only lets a person answer at a realistic hour. |
+| **The one gate that actually sends recorded no why.** Every other human decision here carries a 1..200 character reason that becomes the approval reference. This one took only a decision and a hash. | A reason is required and recorded in the `approval.approved` / `approval.rejected` event. It rides in the event payload rather than a new column, so no migration. |
+
+### Also removed
+
+- **`Store.consume_approval` (db_runs.py) is gone.** Both gateways use
+  `consume_approval_and_record_receipt`; nothing called this one. It was a second,
+  unexercised implementation of *spending an approval* — the most security-sensitive
+  operation here — where a maintainer could reasonably have fixed one and not the other.
+  Flagged first rather than deleted in passing, because removing code on an approval path is
+  a decision, not tidying; removed once that decision was taken.
+
+### Known and accepted
+
+- **The step gate and the connector gate are two separate approvals.** `approve` moves a run;
+  `decide_approval` unlocks one outward call. The code says so deliberately
+  (`service.py`), and `company/operating-principles.md` documents both. Nothing wires one to
+  the other, so a real outward action needs two human decisions. Correct but worth knowing.
