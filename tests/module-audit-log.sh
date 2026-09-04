@@ -103,7 +103,9 @@ else
 fi
 check "writer exists in the runtime"  "[ -f runtime/audit.py ]"
 check "chain verifies end to end"     "python3 -m runtime.audit verify >/dev/null"
-check "gates call the writer"         "grep -q 'audit_log.append' runtime/company_runtime.py"
+# `mutate` is where a gated transition writes its entry. It lives in run_state.py; the grep
+# covers the whole runtime so moving it again cannot turn this check off without noticing.
+check "gates call the writer"         "grep -rq 'audit_log.append' runtime/*.py"
 
 echo ""; echo "──── MODULE audit-log: $pass passed / $fail failed ────"
 [ $fail -eq 0 ] || exit 1
