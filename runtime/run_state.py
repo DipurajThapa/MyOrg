@@ -131,7 +131,13 @@ def validate_workflow(data: dict) -> None:
             if actions.get(step.get("action")) != "green": errors.append(f"{step_id}: checker belongs on a green preparation step before a separate human-gated action")
             review_limit=step.get("max_review_cycles")
             if not isinstance(review_limit,int) or not 1 <= review_limit <= 3: errors.append(f"{step_id}: max_review_cycles must be 1..3")
-            if isinstance(review_limit,int) and isinstance(step.get("max_attempts"),int) and step["max_attempts"] < review_limit+1: errors.append(f"{step_id}: max_attempts must allow initial work plus every review return")
+            # +2, not +1. A step is graded against its own acceptance criteria before a
+            # checker ever sees it, and a rejected attempt is spent -- so +1 leaves nothing
+            # for a single grader rejection. The planner prompt has advised +2 for a while
+            # and models kept writing the schema minimum instead; every large generated
+            # workflow on disk died this way, its first research step out of attempts with
+            # 25 steps still pending behind it. Advice in a prompt is not a rule.
+            if isinstance(review_limit,int) and isinstance(step.get("max_attempts"),int) and step["max_attempts"] < review_limit+2: errors.append(f"{step_id}: max_attempts must be at least max_review_cycles + 2 -- one go at the work, one spare for a grader rejection, and one per review return")
         elif "max_review_cycles" in step: errors.append(f"{step_id}: max_review_cycles requires checker")
         if step.get("action") not in actions: errors.append(f"{step_id}: action is not policy-classified: {step.get('action')}")
         attempts = step.get("max_attempts")

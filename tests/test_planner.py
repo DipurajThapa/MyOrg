@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+
 from runtime import company_runtime as core
 from runtime.executor import ExecutorError
 from runtime.planner import (PlanRequest, StubPlannerBackend, actions_by_risk,
@@ -122,27 +124,48 @@ class PlannerTest(unittest.TestCase):
         self.assertIn("cannot be satisfied and cannot be graded", rules)
 
     def test_the_planner_budgets_attempts_for_grading_as_well_as_review(self):
-        """`max_review_cycles + 1` passes validation and is still too tight: it reserves one
-        attempt for the work and one per return, leaving nothing for a grader rejection. A
-        real run set 2 against 1, failed the grader once, and was blocked the moment its
-        checker returned the work."""
+        """Grading costs attempts before a checker ever sees the work, and the prompt has
+        to say so. The floor is now enforced, so the prompt must quote the same number the
+        validator refuses on -- a plan written to a rule the runtime does not hold, or a
+        runtime holding one the prompt never states, wastes a repair round either way."""
         from runtime.planner import PlanRequest
         rules = PlanRequest(agent="chief-of-staff", goal="g", workflow_id="w",
                             brief="b").rules()
-        self.assertIn("max_review_cycles + 2", rules)
+        self.assertIn("max_attempts at least max_review_cycles + 2", rules)
         self.assertIn("a rejected attempt is spent", rules)
-        self.assertIn("leaves no room for a single grader rejection", rules)
+        self.assertIn("the floor the runtime enforces", rules)
+        self.assertNotIn("max_review_cycles + 1", rules,
+                         "the old, looser floor must not survive anywhere in the prompt")
 
-    def test_the_runtime_floor_stays_where_it_is(self):
-        """The prompt asks for headroom; validation still only demands viability. Raising
-        the floor would invalidate every shipped workflow, which is a migration, not a fix."""
-        workflow = {
-            "version": 1, "id": "wf-floor", "goal": "g", "max_cycles": 8,
-            "steps": [{"id": "s1", "owner": "cto-engineering", "action": "internal_write",
-                       "depends_on": [], "max_attempts": 2, "checker": "cpo-product",
-                       "max_review_cycles": 1}],
-        }
-        core.validate_workflow(workflow)  # accepted: minimum viable, not generous
+    def test_the_runtime_enforces_the_floor_the_prompt_asks_for(self):
+        """This used to assert the opposite -- that validation demanded only viability,
+        because raising the floor was a migration rather than a fix. The migration was
+        done: the prompt had advised max_review_cycles + 2 for a while and models kept
+        writing the schema minimum instead, and every large generated workflow on disk
+        died of it, first research step out of attempts with 25 steps still pending behind
+        it. A rule a model can read past is not a rule.
+        """
+        def floor_case(attempts: int) -> dict:
+            return {"version": 1, "id": "wf-floor", "goal": "g", "max_cycles": 8,
+                    "steps": [{"id": "s1", "owner": "cto-engineering",
+                               "action": "internal_write", "depends_on": [],
+                               "max_attempts": attempts, "checker": "cpo-product",
+                               "max_review_cycles": 1}]}
+
+        core.validate_workflow(floor_case(3))  # 1 review cycle + 2: accepted
+        with self.assertRaises(SystemExit) as refused:
+            core.validate_workflow(floor_case(2))  # + 1: no room for a grader rejection
+        self.assertIn("max_review_cycles + 2", str(refused.exception),
+                      "the refusal is planner repair feedback -- it must name the rule")
+
+    def test_every_shipped_workflow_meets_the_floor(self):
+        """The migration is only done if the files agree with the validator."""
+        import glob, json
+        shipped = sorted(glob.glob(str(ROOT / "runtime" / "workflows" / "*.json")))
+        self.assertTrue(shipped, "no shipped workflows found to check")
+        for path in shipped:
+            with self.subTest(workflow=path), open(path, encoding="utf-8") as handle:
+                core.validate_workflow(json.load(handle))
 
     def test_a_busy_server_is_not_treated_as_a_badly_written_plan(self):
         """Repair attempts exist to tell the model its JSON was wrong. Feeding a transport

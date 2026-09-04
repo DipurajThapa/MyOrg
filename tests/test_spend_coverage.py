@@ -47,7 +47,7 @@ class SpendCoverageTest(BudgetTestBase):
         workflow = {"version": 1, "id": f"wf-{run_id}", "goal": "coverage", "max_cycles": 30,
                     "steps": [{"id": "s1", "owner": "cto-engineering", "checker": "coo-operations",
                                "max_review_cycles": 2, "action": "internal_write",
-                               "depends_on": [], "max_attempts": 3}]}
+                               "depends_on": [], "max_attempts": 4}]}
         path = Path(self._tmp.name) / f"{run_id}.wf.json"
         path.write_text(json.dumps(workflow), encoding="utf-8")
         self.executor.quietly(self.core.create_run, self.ns(

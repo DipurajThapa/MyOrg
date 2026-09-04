@@ -23,7 +23,7 @@
       "depends_on": [
         "gather-account-context"
       ],
-      "max_attempts": 3,
+      "max_attempts": 4,
       "checker": "cpo-product",
       "max_review_cycles": 2,
       "acceptance": [
@@ -40,7 +40,7 @@
         "gather-account-context",
         "map-onboarding-process"
       ],
-      "max_attempts": 3,
+      "max_attempts": 4,
       "checker": "revops",
       "max_review_cycles": 2,
       "acceptance": [
@@ -116,7 +116,7 @@
         "review-onboarding-security-gates",
         "review-contract-and-legal-gates"
       ],
-      "max_attempts": 3,
+      "max_attempts": 4,
       "checker": "coo-operations",
       "max_review_cycles": 2,
       "acceptance": [
@@ -132,7 +132,7 @@
       "depends_on": [
         "root-cause-synthesis"
       ],
-      "max_attempts": 3,
+      "max_attempts": 4,
       "checker": "coo-operations",
       "max_review_cycles": 2,
       "acceptance": [
@@ -148,7 +148,7 @@
       "depends_on": [
         "draft-fix-plan"
       ],
-      "max_attempts": 3,
+      "max_attempts": 4,
       "checker": "customer-success",
       "max_review_cycles": 2,
       "acceptance": [
@@ -209,7 +209,7 @@
         "redesign-onboarding-runbook",
         "validate-fix-plan-feasibility"
       ],
-      "max_attempts": 3,
+      "max_attempts": 4,
       "checker": "cmo-marketing",
       "max_review_cycles": 2,
       "acceptance": [

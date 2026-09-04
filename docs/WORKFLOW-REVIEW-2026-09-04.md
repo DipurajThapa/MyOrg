@@ -97,3 +97,70 @@ holds: `fire_due_schedules` runs before the hold, so the goal is queued the mome
 lifts. Only the start is deferred. The test now asserts both halves — the schedule fires
 into the queue on resume, and starts on the following pass once the moving run finishes —
 which covers more than it did before.
+
+---
+
+## Stage 2 — Planning a queued idea
+
+**Path.** `start_queued` → `planner.plan(goal, run_id, backend, costs)` → up to 3 attempts of
+`backend(request)` → `extract_json` → force the id → `enforce_budget` →
+`core.validate_workflow`, whose errors are handed straight back as repair feedback → write
+`runs/<run_id>.planned.json` → `core.create_run` with the planning spend seeded.
+
+**Inputs.** One goal string, a run id, a planner backend.
+**Outputs.** A validated workflow, a run on disk, `planning_spend_usd` charged to it.
+**Decision points.** Valid JSON · schema validation · repair or give up after 3 · transient
+failures raise instead of spending the repair budget.
+**Handoff.** An `active` run with every step `pending` or `ready`.
+
+### What the evidence said
+
+Reading the runs on disk rather than the code first changed the finding. Every large
+generated workflow is dead:
+
+| steps | completed | died of |
+|---:|---:|---|
+| 22–26 | 0–1 | `blocked_retry_limit` / `blocked_review_limit` |
+
+Six of six. Small runs (1–6 steps) mostly completed. None ran out of *cycles* — measured
+2.0–3.0 cycles per step against a budget of 4, so `CYCLES_PER_STEP` is sound.
+
+Opening two of them: the first research step failed its acceptance criteria three times and
+took all 25 pending steps with it. Four of the seven dead steps sat at
+`max_attempts == max_review_cycles + 1`.
+
+### Fixed
+
+`planner.py` had been *advising* `max_attempts = max_review_cycles + 2` in prose, and warning
+about this exact failure, while `validate_workflow` enforced only `+ 1`. Models wrote the
+schema minimum, not the advice. **Advice in a prompt is not a rule; the validator is.**
+
+- `validate_workflow` now enforces `max_attempts >= max_review_cycles + 2`, and the refusal
+  names the rule, because that string becomes the planner's repair feedback.
+- The prompt quotes the same number the validator refuses on — a plan written to a rule the
+  runtime does not hold, or a runtime holding one the prompt never states, wastes a repair
+  round either way.
+- The 7 shipped steps below the floor were migrated (`fix-onboarding.json` ×6,
+  `maker-checker-gold-run.json` ×1), and a test now asserts every shipped workflow validates,
+  so the files and the validator cannot drift apart again.
+
+**A reversed decision, recorded.** `test_the_runtime_floor_stays_where_it_is` previously
+asserted the opposite, reasoning that raising the floor "would invalidate every shipped
+workflow, which is a migration, not a fix." That was true and the migration is now done. The
+replacement test carries the reversal and the evidence for it.
+
+### Known and accepted
+
+- **`enforce_budget` cannot honour its own promise past 25 steps.** It sets
+  `max_cycles = min(len(steps) * 4, 100)`, so a 30-step plan gets 3.3 cycles per step, and
+  the human budget extension is capped at 100 as well — such a plan can never finish. Not
+  what is actually killing runs today (none came close to the cycle ceiling), so it is
+  recorded rather than fixed. Revisit if a plan ever dies at `blocked_cycle_limit`.
+- **`extract_json` takes the outermost `{...}` greedily.** Prose containing braces before the
+  JSON costs one repair attempt, then self-heals through the feedback loop.
+
+### Carried forward
+
+| ID | Issue | Revisit at |
+|---|---|---|
+| C-3 | **The run records the model's goal, not the person's.** `plan()` forces `workflow["id"]` but not `workflow["goal"]`, so `run.created` stores whatever the model wrote. The Ideas panel shows the operator's words and the Runs list shows the paraphrase — and the human at an approval gate sees the paraphrase, not the request. One line to fix; held for Stage 3, where what a human is shown before approving is the subject. | Stage 3 |
