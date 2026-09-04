@@ -154,7 +154,10 @@ class Console(unittest.TestCase):
 
     def test_the_page_only_calls_routes_the_api_serves(self):
         page = (ROOT / "runtime" / "console.html").read_text(encoding="utf-8")
-        api = (ROOT / "runtime" / "api.py").read_text(encoding="utf-8")
+        # Every file the boundary is split across: the page cares that a route is served,
+        # not which of those files serves it.
+        api = "".join(path.read_text(encoding="utf-8")
+                      for path in sorted((ROOT / "runtime").glob("api*.py")))
         for route in ("/v1/me", "/v1/decisions", "/v1/memory/proposals", "/v1/runs",
                       "/v1/console/token", "/v1/ideas"):
             self.assertIn(f'"{route}"', page, f"{route} is not called by the page")
