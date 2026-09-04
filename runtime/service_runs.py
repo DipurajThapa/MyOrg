@@ -122,6 +122,14 @@ class RunsServiceMixin:
         # company's actions cannot ask it to act -- and a webhook, which needs no role at
         # all, could start work they could not.
         _require(principal, "decision-owner", "chief-of-staff", "system-admin")
+        # A webhook starts work but never says what the work *is* -- it selects a goal a
+        # human registered in advance, because "a payload that could name its own goal
+        # would be an instruction from outside the trust boundary". This route is the one
+        # place free goal text reaches the planner, so the same boundary has to hold here:
+        # an agent holding a chief-of-staff token could otherwise write its own instructions,
+        # queue them, and have the company plan and run them with nobody having asked.
+        if principal.actor_type != "human":
+            raise Forbidden("asking the company for work requires a registered human identity")
         if set(body) != {"goal"}:
             raise ServiceError("an idea takes exactly one field: goal")
         goal = str(body["goal"]).strip()

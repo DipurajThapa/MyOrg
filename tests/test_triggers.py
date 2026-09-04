@@ -23,10 +23,14 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
+from contextlib import redirect_stdout
 from datetime import timedelta
+from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 from runtime import triggers
 from runtime.connectors import ConnectorError, validate_manifest
@@ -307,6 +311,98 @@ class StartQueuedTest(TriggerTestBase):
         self.assertEqual(len(still), 1)
         self.assertEqual(still[0]["attempts"], 1)
         self.assertIn("planner unavailable", still[0]["last_error"])
+
+    # --- one request at a time -------------------------------------------------------
+    # The queue is a line, not a pile. Starting five at once meant five model calls and
+    # five runs competing for one sweep, and the order stopped meaning anything the moment
+    # more than one request was waiting.
+
+    def test_only_the_front_of_the_queue_starts_and_the_rest_wait_their_turn(self) -> None:
+        from runtime.planner import StubPlannerBackend
+        for reference in ("crm:first", "crm:second", "crm:third"):
+            self.queue(reference)
+        started = triggers.start_queued(self.store, "acme", StubPlannerBackend(),
+                                        log=lambda _m: None)
+        self.assertEqual(len(started), 1, "one request starts per pass")
+        self.assertEqual(started[0]["intake_id"], triggers.intake_id("webhook", "crm:first"),
+                         "and it is the one that queued first")
+        self.assertEqual([row["source_ref"] for row in self.store.queued_triggers("acme", 10)],
+                         ["crm:second", "crm:third"])
+
+    def test_nothing_new_starts_while_a_run_is_still_working(self) -> None:
+        from runtime.planner import StubPlannerBackend
+        self.queue("crm:first")
+        self.queue("crm:second")
+        triggers.start_queued(self.store, "acme", StubPlannerBackend(), log=lambda _m: None)
+        lines: list[str] = []
+        self.assertEqual(triggers.start_queued(self.store, "acme", StubPlannerBackend(),
+                                               log=lines.append), [])
+        self.assertTrue(any("intake held" in line for line in lines), lines)
+        waiting = self.store.queued_triggers("acme", 10)
+        self.assertEqual([row["source_ref"] for row in waiting], ["crm:second"])
+        self.assertEqual(waiting[0]["attempts"], 0,
+                         "waiting its turn is not an attempt and must cost it nothing")
+
+    def test_a_finished_run_lets_the_next_request_start(self) -> None:
+        from runtime.planner import StubPlannerBackend
+        self.queue("crm:first")
+        self.queue("crm:second")
+        first = triggers.start_queued(self.store, "acme", StubPlannerBackend(),
+                                      log=lambda _m: None)[0]
+        with redirect_stdout(StringIO()):
+            self.core.cancel_run(SimpleNamespace(
+                run_id=first["run_id"], approver="Chief", actor_id="chief",
+                reason="ending it so the next one may start", request_id="cancel-1"))
+        second = triggers.start_queued(self.store, "acme", StubPlannerBackend(),
+                                       log=lambda _m: None)
+        self.assertEqual([item["intake_id"] for item in second],
+                         [triggers.intake_id("webhook", "crm:second")])
+        self.assertEqual(self.store.queued_triggers("acme"), [])
+
+    def test_a_run_waiting_on_a_person_does_not_hold_the_queue(self) -> None:
+        """Every outward action parks at a human gate, so waiting is this company's resting
+        state rather than an exception. Counting it as "still working" would let one unread
+        approval stop every other request for as long as the inbox went unread."""
+        from runtime import health
+        from runtime.planner import StubPlannerBackend
+        self.queue()
+        live = triggers.start_queued(self.store, "acme", StubPlannerBackend(),
+                                     log=lambda _m: None)[0]["run_id"]
+        self.assertEqual(triggers.in_flight("acme"), [live], "a moving run does hold it")
+        for state in (health.WAITING, health.FINISHED, health.FAILED):
+            with unittest.mock.patch.object(
+                    health, "all_health",
+                    return_value=[SimpleNamespace(run_id=live, state=state)]):
+                self.assertEqual(triggers.in_flight("acme"), [], state)
+
+    def test_a_request_that_cannot_start_keeps_its_place_until_its_chances_are_spent(self) -> None:
+        """The front of the queue is owed all three of its attempts. Handing its place to a
+        newer request on the first bad minute would make the order meaningless exactly when
+        it matters, and only once the reason is recorded does the next one get its turn."""
+        from runtime.executor import ExecutorError
+        from runtime.planner import StubPlannerBackend
+
+        def wrong(_request):
+            raise ExecutorError("result=Prompt is too long")
+
+        self.queue("crm:first")
+        self.queue("crm:second")
+        for attempt in range(1, 4):
+            self.assertEqual(triggers.start_queued(self.store, "acme", wrong,
+                                                   log=lambda _m: None), [])
+            head = self.store.queued_triggers("acme", 10)[0]
+            self.assertEqual(head["source_ref"], "crm:first",
+                             "the failing request keeps the front of the queue")
+            self.assertEqual(head["attempts"], attempt)
+        started = triggers.start_queued(self.store, "acme", StubPlannerBackend(),
+                                        log=lambda _m: None)
+        self.assertEqual([item["intake_id"] for item in started],
+                         [triggers.intake_id("webhook", "crm:second")],
+                         "the next request is promoted only after the first gives up")
+        abandoned = self.store.failed_triggers()
+        self.assertEqual(len(abandoned), 1)
+        self.assertIn("gave up after 3 attempts", abandoned[0]["last_error"])
+        self.assertIn("Prompt is too long", abandoned[0]["last_error"])
 
     def test_a_trigger_that_keeps_failing_is_given_up_on_rather_than_retried_forever(self) -> None:
         from runtime.executor import ExecutorError

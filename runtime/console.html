@@ -190,11 +190,11 @@ async function refreshToken() {
              Math.max(30, payload.expires_in / 2) * 1000);
 }
 
-async function call(method, path, body, prefix) {
+async function call(method, path, body, prefix, id) {
   const headers = { "Authorization": `Bearer ${token}` };
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
-    headers["X-Request-Id"] = requestId(prefix || "console");
+    headers["X-Request-Id"] = id || requestId(prefix || "console");
   }
   return request(method, path, headers,
                  body === undefined ? undefined : JSON.stringify(body));
@@ -244,6 +244,13 @@ function actionRow(card, placeholder, actions) {
   card.appendChild(note);
 }
 
+// The request id *is* the idea's identity: the server hashes it into the intake id, so the
+// same id twice lands on the row that already exists. A new id per click threw that away --
+// a dropped connection after the server had queued the work left the operator retrying into
+// a second row, a second plan and a second bill. So one id is held per wording: retry the
+// same sentence and it is the same request; change the sentence and it is a new one.
+let pending = { goal: "", id: "" };
+
 async function startWork() {
   const goal = el("goal").value.trim();
   const note = el("startNote");
@@ -253,14 +260,17 @@ async function startWork() {
     note.textContent = "Say a little more (10 characters minimum).";
     return;
   }
+  if (goal !== pending.goal) pending = { goal, id: requestId("idea") };
   button.disabled = true;
   note.className = "note"; note.textContent = "queueing…";
   try {
-    const result = await call("POST", "/v1/ideas", { goal }, "idea");
+    const result = await call("POST", "/v1/ideas", { goal }, null, pending.id);
+    pending = { goal: "", id: "" };
     el("goal").value = "";
     note.className = "note ok";
-    note.textContent =
-      `Queued as ${result.intake_id}. It becomes ${result.run_id} on the next intake pass.`;
+    note.textContent = result.created
+      ? `Queued as ${result.intake_id}. It becomes ${result.run_id} on the next intake pass.`
+      : `Already queued as ${result.intake_id} — this is the same request, not a second one.`;
     await load();
   } catch (error) {
     note.className = "note err"; note.textContent = error.message;

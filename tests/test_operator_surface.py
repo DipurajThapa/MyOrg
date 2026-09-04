@@ -205,10 +205,21 @@ class SuspendedMeansSuspendedTest(unittest.TestCase):
         self.store.set_organization_status("acme", "active")
         resumed = self.scheduler.sweep(StubBackend(), log=self.logs.append,
                                        planner_backend=StubPlannerBackend())
-        self.assertEqual(len(resumed.started), 1)
+        # The pause is lifted, so the due schedule fires and its goal is queued -- nothing
+        # about suspension loses it. Starting it is a separate question: `sus-moving` is
+        # still moving when intake runs, and the queue takes one request at a time, so the
+        # schedule's work waits for its turn rather than running alongside.
+        self.assertEqual(resumed.started, [], "the run already moving holds the queue")
+        self.assertEqual(len(self.store.queued_triggers("acme")), 1,
+                         "the schedule fired the moment the pause lifted")
         self.assertIn("sus-moving", resumed.driven)
         self.assertEqual(self.done("sus-moving"), 3)
-        for run_id in resumed.started:
+        # ...and with that run finished, the next pass gives the schedule its turn.
+        following = self.scheduler.sweep(StubBackend(), log=self.logs.append,
+                                         planner_backend=StubPlannerBackend())
+        self.assertEqual(len(following.started), 1)
+        self.assertEqual(self.store.queued_triggers("acme"), [])
+        for run_id in following.started:
             self.addCleanup(lambda r=run_id: (ROOT / "runtime" / "workflows" / f"{r}.json")
                             .unlink(missing_ok=True))
 

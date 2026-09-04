@@ -113,9 +113,11 @@ class RoutesMixin(OperationsRoutesMixin):
                 self._send(HTTPStatus.OK, {"status": "ready", "database": verification})
                 return
             # The operator console: one page, and the short-lived token it runs on. Both
-            # are refused unless MYORG_CONSOLE_ACTOR names a human and the caller is on the
+            # are refused unless MYORG_CONSOLE_ACTOR is set and the caller is on the
             # loopback interface -- the same trust boundary as the admin CLI, which anyone
-            # who can already read the database and the signing secret has anyway.
+            # who can already read the database and the signing secret has anyway. The
+            # token carries whatever that actor is; the routes that need a person, such as
+            # deciding a step or asking for work, check `actor_type` themselves.
             if method == "GET" and path in {"/", "/console"}:
                 self._send_console()
                 return

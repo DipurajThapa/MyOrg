@@ -85,11 +85,47 @@ class OperatorWork(unittest.TestCase):
         self.assertEqual(first["intake_id"], second["intake_id"])
         self.assertEqual(len(self.store.queued_triggers("acme", 10)), 1)
 
+    def test_the_queue_is_first_in_first_out_and_a_retry_keeps_its_place(self):
+        """Oldest first, and a failure does not send an idea to the back of the line.
+
+        Both halves are load-bearing. `created_at` is stored to the second, so ideas typed
+        in one second tie and only `rowid` separates them. And an idea the planner could
+        not reach is settled back to `queued` -- if that had touched `created_at` it would
+        lose its place every time the other end was busy, which is how the oldest request
+        becomes the last one served.
+        """
+        with unittest.mock.patch("runtime.db_triggers.utc_now",
+                                 return_value="2026-09-04T12:00:00Z"):
+            for number in range(4):
+                self.service.submit_idea(self.principal(),
+                                         {"goal": f"Idea number {number} in the queue."},
+                                         f"idea-fifo-{number}")
+        order = [row["goal"] for row in self.store.queued_triggers("acme", 10)]
+        self.assertEqual(order, [f"Idea number {number} in the queue." for number in range(4)])
+
+        head = self.store.queued_triggers("acme", 1)[0]
+        self.store.settle_trigger("acme", head["id"], "queued", None,
+                                  "the model was busy", count_attempt=False)
+        self.assertEqual([row["goal"] for row in self.store.queued_triggers("acme", 10)], order,
+                         "a retried idea keeps the place it queued in")
+
     def test_the_decision_owner_may_ask_for_work_and_a_viewer_may_not(self):
         self.service.submit_idea(self.principal(), {"goal": "A goal long enough."}, "idea-role")
         with self.assertRaises(Forbidden):
             self.service.submit_idea(self.principal("looker"),
                                      {"goal": "A goal long enough."}, "idea-denied")
+
+    def test_only_a_human_may_put_free_text_in_front_of_the_planner(self):
+        """A webhook starts work but cannot say what it is; this route can say anything.
+
+        An agent holding a work-creating role would otherwise write its own instructions,
+        queue them, and have the company plan and run them with nobody having asked.
+        """
+        self.store.upsert_actor("acme", "helper", "agent", "Helper", ["chief-of-staff"])
+        with self.assertRaises(Forbidden):
+            self.service.submit_idea(self.principal("helper"),
+                                     {"goal": "Work I gave myself."}, "idea-agent")
+        self.assertEqual(self.store.queued_triggers("acme", 10), [])
 
     def test_a_goal_must_be_one_printable_line_of_a_sane_length(self):
         for goal in ("too short", "x" * 501, "two\nlines that are long enough"):

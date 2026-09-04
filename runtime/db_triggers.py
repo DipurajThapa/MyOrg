@@ -103,9 +103,22 @@ class TriggersMixin:
                                            (org_id, intake_id)).fetchone()), True
 
     def queued_triggers(self, org_id: str, limit: int = 20) -> list[dict]:
+        """The work queue, oldest first. First in, first out, and nothing overtakes.
+
+        `created_at` is stored to the second, so several ideas typed in the same second
+        share one, and ordering by it alone leaves their order to whatever plan SQLite
+        picks. `rowid` is the insertion counter, so it breaks every tie the way the queue
+        was actually filled -- the guarantee is then written down rather than inherited
+        from an index the optimizer is free to stop using.
+
+        A retry keeps its place: `settle_trigger` never touches `created_at`, so an idea
+        the planner could not reach stays at the front instead of going to the back of the
+        line for a fault that was not its own.
+        """
         with self.reading() as connection:
             return [dict(row) for row in connection.execute(
-                "SELECT * FROM trigger_intake WHERE org_id=? AND status='queued' ORDER BY created_at LIMIT ?",
+                "SELECT * FROM trigger_intake WHERE org_id=? AND status='queued' "
+                "ORDER BY created_at, rowid LIMIT ?",
                 (org_id, int(limit)))]
 
     def unfinished_triggers(self, org_id: str, limit: int = 50) -> list[dict]:

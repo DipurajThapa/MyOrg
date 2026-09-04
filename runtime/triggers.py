@@ -147,9 +147,40 @@ def run_id_for(intake: dict) -> str:
     return f"run-{intake['id'][3:]}"
 
 
+def in_flight(org_id: str) -> list[str]:
+    """Runs this organization has actually moving right now.
+
+    Waiting on a person is deliberately not "moving". Every outward action parks at a human
+    gate, so waiting is the company's normal resting state, not an exception -- holding all
+    new work behind one unanswered approval would stop the company rather than pace it.
+    Stalled *is* moving: the sweep still tries to drive it, and it may yet finish.
+    """
+    from runtime.health import RUNNING, STALLED, all_health
+    moving = []
+    for run in all_health():
+        if run.state not in (RUNNING, STALLED):
+            continue
+        try:
+            events = core.read_events(run.run_id)
+        except SystemExit:
+            continue  # unreadable; the health scan already reports it
+        if events[-1].get("org_id", core.DEFAULT_ORG) == org_id:
+            moving.append(run.run_id)
+    return moving
+
+
 def start_queued(store: Store, org_id: str, backend, limit: int = 5, log=print) -> list[dict]:
-    """Turn queued triggers into real runs. One failure never blocks the others, and a
-    trigger that keeps failing is marked failed rather than retried forever."""
+    """Start the front of the queue, one request at a time.
+
+    First in, first out, and strictly serial: while a run is moving nothing new is planned,
+    and when it finishes the next request gets its turn. A request that cannot be started
+    keeps the front of the queue for all `MAX_TRIGGER_ATTEMPTS` of its chances -- the queue
+    does not step over it on the first bad minute -- and only once those are spent is it
+    marked with the reason it was abandoned and the next request promoted.
+
+    `limit` is how far down the queue this pass may look, not how many it may start. Rows
+    already out of attempts are settled and skipped without costing the live one its pass.
+    """
     started = []
     for intake in store.queued_triggers(org_id, limit):
         if intake["attempts"] >= MAX_TRIGGER_ATTEMPTS:
@@ -171,7 +202,18 @@ def start_queued(store: Store, org_id: str, backend, limit: int = 5, log=print) 
                 started.append({"intake_id": intake["id"], "run_id": run_id,
                                 "source": intake["source"]})
                 log(f"  trigger {intake['id']}: adopted the run a previous attempt created")
-                continue
+                break  # one at a time: that run now holds the queue
+            # The hold is checked here rather than before the loop because adopting the run
+            # above is pure bookkeeping -- it starts nothing and spends nothing, and that
+            # orphan *is* this trigger's own run, so a hold placed earlier would block the
+            # one thing that reconciles it. From this line on the pass would create work,
+            # and that is what waits for whatever is already moving.
+            busy = in_flight(org_id)
+            if busy:
+                log(f"  intake held: {busy[0]} is still working"
+                    + (f" and so are {len(busy) - 1} more" if len(busy) > 1 else "")
+                    + " -- the next request starts when it finishes")
+                break
             # Say so *before* the call, not after. Planning happens inside the sweep and
             # ahead of the drive pass, and one model call can take minutes -- so during it
             # the log goes quiet, nothing else is driven, and an operator watching cannot
@@ -205,10 +247,13 @@ def start_queued(store: Store, org_id: str, backend, limit: int = 5, log=print) 
                    if transient else ""))
             _mark(store, org_id, intake["id"], "queued", None, str(error),
                   count_attempt=not transient)
-            continue
+            # It keeps the front of the queue. Stepping over it here would hand its place to
+            # a newer request on the first bad minute, and it is owed two more chances.
+            break
         _mark(store, org_id, intake["id"], "started", run_id, None)
         started.append({"intake_id": intake["id"], "run_id": run_id, "source": intake["source"]})
         log(f"  trigger {intake['id']}: started {run_id}")
+        break  # one at a time: the next request starts when this run finishes
     return started
 
 
